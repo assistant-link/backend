@@ -1,0 +1,38 @@
+# Fly.io template. Copy it to the repository root as fly.toml, replace every <placeholder>, then follow
+# deploy/SELF_HOSTING.md.
+app = '<your-app-name>'
+primary_region = '<region>'
+kill_signal = 'SIGTERM'
+
+[deploy]
+  release_command = '/app/bin/migrate'
+
+[env]
+  PHX_HOST = '<your-app-name>.fly.dev'
+  PORT = '8080'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Stop when no requests or connections are open; open WebSockets keep the machine running.
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'connections'
+    hard_limit = 1000
+    soft_limit = 1000
+
+  [[http_service.checks]]
+    grace_period = '10s'
+    interval = '30s'
+    method = 'GET'
+    path = '/health'
+    timeout = '5s'
+
+[[vm]]
+  cpu_kind = 'shared'
+  cpus = 1
+  memory = '512mb'

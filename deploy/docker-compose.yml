@@ -1,0 +1,46 @@
+# The service and Postgres on one host. From the repository root:
+#
+#   SECRET_KEY_BASE="$(openssl rand -base64 48)" docker compose -f deploy/docker-compose.yml up --build
+#
+# See deploy/SELF_HOSTING.md for the settings.
+
+name: assistant-link
+
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: assistant_link
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d assistant_link"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ..
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["/bin/sh", "-c", "/app/bin/migrate && exec /app/bin/server"]
+    environment:
+      DATABASE_URL: ecto://postgres:${POSTGRES_PASSWORD:-postgres}@db/assistant_link
+      # The database is only reachable on the Compose network.
+      DATABASE_SSL: "false"
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE, for example to the output of openssl rand -base64 48}
+      PHX_HOST: ${PHX_HOST:-localhost}
+      PHX_SCHEME: ${PHX_SCHEME:-http}
+      PHX_URL_PORT: ${PHX_URL_PORT:-4000}
+      PORT: "4000"
+    ports:
+      - "${APP_PORT:-4000}:4000"
+    restart: unless-stopped
+
+volumes:
+  db-data:
