@@ -51,55 +51,118 @@ cargo install --git https://github.com/assistant-link/cli al
 
 ### 2. Point `al` at the service
 
-Use the service URL from the pairing text for every command in this session:
+`al` uses `https://assistant-link.fly.dev` unless told otherwise. If the "Service:" line of the pairing text names
+another URL, set `AL_SERVER` to it for every `al` command below, and in the wrapper in step 5. If your shell does not
+keep variables between commands, put it in front of each `al` command instead.
 
 ```sh
-export AL_SERVER=https://assistant-link.fly.dev   # the "Service:" line of the pairing text
+export AL_SERVER=https://assistant-link.example   # only if the "Service:" line is not https://assistant-link.fly.dev
 ```
 
 ### 3. Pair
 
-```sh
-al pair K7QM-2XPA   # the "Pairing code:" line of the pairing text
-```
-
-It prints the service URL, the Link id, and the Assistant name as one JSON object, and stores the Link's credential in
-`~/.config/assistant-link/credentials.json` (or under `$XDG_CONFIG_HOME`). One host user holds one Link: pairing again
-replaces the stored credential. To run several Assistants on one host, use a separate OS user or `XDG_CONFIG_HOME`
-for each.
-
-### 4. Check the connection
+`al` keeps nothing on the host: it hands you the Link key, and you store it. Each Assistant on a host keeps its own
+key under its own name. The commands below use `hermes`; replace it everywhere with this Assistant's name, in
+lowercase.
 
 ```sh
-al status
+mkdir -p -m 700 ~/.config/assistant-link
+al pair K7QM-2XPA --key-file ~/.config/assistant-link/hermes.key   # the "Pairing code:" line of the pairing text
 ```
 
-It exits 0 and prints one JSON object with the Assistant name, the Link id, and `"check": "accepted"`. Every `al`
-command prints JSON by default; add `--human` for text.
+It prints the service URL, the Link id, and the Assistant name as one JSON object, and writes the Link key to the file,
+readable only by your user. Every `al` command prints JSON by default; add `--human` for text. Use `--key-file` as
+shown: without it, `al pair` prints the key, and it would end up in your transcript.
+
+### 4. Store the key and check the connection
+
+Keep the key in the best storage this host has. Use the first option that works, and never print the key.
+
+**macOS Keychain:**
+
+```sh
+printf 'add-generic-password -a hermes -s assistant-link -w %s\n' "$(cat ~/.config/assistant-link/hermes.key)" | security -i
+rm ~/.config/assistant-link/hermes.key
+AL_LINK_KEY="$(security find-generic-password -a hermes -s assistant-link -w)" al status
+```
+
+**Linux Secret Service** (needs a running keyring, as in a desktop session):
+
+```sh
+secret-tool store --label="Assistant Link: hermes" service assistant-link account hermes <~/.config/assistant-link/hermes.key
+rm ~/.config/assistant-link/hermes.key
+AL_LINK_KEY="$(secret-tool lookup service assistant-link account hermes)" al status
+```
+
+**Key file** (any host): keep `~/.config/assistant-link/hermes.key` where it is.
+
+```sh
+al status --key-file ~/.config/assistant-link/hermes.key
+```
+
+`al status` exits 0 and prints one JSON object with the Assistant name, the Link id, and `"check": "accepted"`.
 
 ### 5. Stay online
 
-Run `al wait` as a long-running process, for example in the background:
+`al wait` holds the connection, so the Assistant Link is online while it runs. Write a small wrapper that supplies the
+key, for the storage you chose. If you set `AL_SERVER` in step 2, add the same `export AL_SERVER=...` line to it
+before `exec`.
+
+**macOS Keychain:**
 
 ```sh
-nohup al wait >>al-events.log 2>>al-wait.log &
+mkdir -p ~/.local/bin
+cat >~/.local/bin/al-wait-hermes <<'WRAPPER'
+#!/bin/sh
+export AL_LINK_KEY="$(security find-generic-password -a hermes -s assistant-link -w)"
+exec al wait
+WRAPPER
+chmod 700 ~/.local/bin/al-wait-hermes
 ```
 
-The Assistant Link is online while `al wait` runs. It reconnects on its own after network drops. Standard output is
-reserved for events from the user; status messages go to standard error as JSON lines. Stop it with SIGINT or SIGTERM, which takes
-the Link offline.
+**Linux Secret Service:**
+
+```sh
+mkdir -p ~/.local/bin
+cat >~/.local/bin/al-wait-hermes <<'WRAPPER'
+#!/bin/sh
+export AL_LINK_KEY="$(secret-tool lookup service assistant-link account hermes)"
+exec al wait
+WRAPPER
+chmod 700 ~/.local/bin/al-wait-hermes
+```
+
+**Key file:**
+
+```sh
+mkdir -p ~/.local/bin
+cat >~/.local/bin/al-wait-hermes <<'WRAPPER'
+#!/bin/sh
+exec al wait --key-file ~/.config/assistant-link/hermes.key
+WRAPPER
+chmod 700 ~/.local/bin/al-wait-hermes
+```
+
+If `al` is not on the `PATH` of the shell that will run the wrapper, use its full path, for example
+`~/.local/bin/al`. Then run the wrapper as a long-running process, for example in the background:
+
+```sh
+nohup ~/.local/bin/al-wait-hermes >>al-events-hermes.log 2>>al-wait-hermes.log &
+```
+
+It reconnects on its own after network drops. Standard output is reserved for events from the user; status messages go
+to standard error as JSON lines. Stop it with SIGINT or SIGTERM, which takes the Link offline.
 
 ## Exit codes
 
-| Code | Meaning                                                      |
-| ---- | ------------------------------------------------------------ |
-| 0    | Success                                                      |
-| 1    | Unexpected error                                             |
-| 2    | Usage error                                                  |
-| 3    | Not paired: run `al pair <code>`                             |
-| 4    | Rejected by the service: invalid or expired code, or credential no longer valid |
-| 5    | Service unreachable                                          |
-| 6    | Server mismatch: the stored credential belongs to a different service URL |
+| Code | Meaning                                                                                       |
+| ---- | --------------------------------------------------------------------------------------------- |
+| 0    | Success                                                                                       |
+| 1    | Unexpected error                                                                              |
+| 2    | Usage error, including a `--key-file` path that already exists for `al pair`                  |
+| 3    | No Link key supplied: set `AL_LINK_KEY` or pass `--key-file`                                  |
+| 4    | Rejected by the service: invalid or expired code, or a Link key it does not accept            |
+| 5    | Service unreachable                                                                           |
 
 ## Stop conditions
 
@@ -107,10 +170,12 @@ Stop and tell the user what happened, instead of retrying, when:
 
 - `al pair` exits 4: the code is invalid, already used, or expired. Ask the user to create a new pairing code in the app
   and send you the new pairing text.
-- `al status` or `al wait` exits 4: the service no longer accepts this Link, for example because the user logged out
-  of the app, which deletes their Assistants. Ask the user for new pairing text.
-- `al status` or `al wait` exits 6: `AL_SERVER` (or `--server`) differs from the service this host paired with, and
-  `al` refuses to send the credential to it. Set `AL_SERVER` to the "Service:" line of the pairing text you paired
-  with, or pair again with new pairing text for the other service.
+- `al pair` exits 2 with `key_file_exists`: a key file with that name already exists and may hold another Link's key.
+  Do not delete it; pick another name. The code was not used, so you can pair again with it.
+- `al status` or `al wait` exits 3: the key did not reach `al`. Check the storage command in your wrapper.
+- `al status` or `al wait` exits 4: the service did not accept the key. First check that `AL_SERVER` matches the
+  "Service:" line of the pairing text you paired with, since a key only works with the service that issued it. If it
+  does, the Link no longer exists, for example because the user logged out of the app, which deletes their
+  Assistants. Ask the user for new pairing text.
 - Any command exits 5 more than a few times over a minute: the service is unreachable. Report the service URL.
 - `al` cannot be installed on this host: report the platform (`uname -sm`) and the error.
