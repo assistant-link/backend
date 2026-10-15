@@ -14,6 +14,9 @@ config :assistant_link, AssistantLinkWeb.Connection, ping_interval: 25_000, time
 config :assistant_link, AssistantLinkWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
+  # Off until Bandit releases a fix for EEF-CVE-2026-105659, an HTTP/2-only flaw; see `hex` in mix.exs.
+  # Clients and Fly's proxy reach the service over HTTP/1.1, which WebSockets need anyway.
+  http: [http_2_options: [enabled: false]],
   render_errors: [
     formats: [html: AssistantLinkWeb.ErrorHTML, json: AssistantLinkWeb.ErrorJSON],
     layout: false
