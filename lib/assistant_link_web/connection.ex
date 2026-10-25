@@ -116,6 +116,11 @@ defmodule AssistantLinkWeb.Connection do
 
   def handle_info({notice, _event}, state) when notice in [:event_created, :event_updated], do: {:ok, state}
 
+  def handle_info({:DOWN, _ref, :process, _pid, _reason}, %{role: {:agent, link}} = state) do
+    :ok = Delivery.connect(link)
+    {:ok, state}
+  end
+
   def handle_info(:account_deleted, state), do: close_account_deleted(state)
 
   @impl WebSock

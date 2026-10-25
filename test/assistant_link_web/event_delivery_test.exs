@@ -426,6 +426,24 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert_receive {:DOWN, ^ref, :process, _pid, :normal}
     end
 
+    test "is started again for an open connection after a crash and catches up",
+         %{scope: scope, assistant: assistant, link: link} = context do
+      client = connect_agent(context)
+      crashed = delivery(link)
+      ref = Process.monitor(crashed)
+      Process.exit(crashed, :kill)
+      assert_receive {:DOWN, ^ref, :process, _pid, :killed}
+
+      event = user_message_fixture(scope, assistant)
+
+      # The connection starts the process again, which then reads the stored message.
+      assert {id, %{"id" => event_id}} = receive_delivery(client)
+      assert event_id == event.id
+      acknowledge(client, id, event.id)
+      assert_receive {:event_updated, %Event{delivered_at: %DateTime{}}}
+      assert delivery(link) != crashed
+    end
+
     test "does not deliver to a Link of a deleted account",
          %{scope: scope, assistant: assistant, link: link} = context do
       user_message_fixture(scope, assistant)

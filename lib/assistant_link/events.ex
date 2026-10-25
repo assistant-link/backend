@@ -264,7 +264,9 @@ defmodule AssistantLink.Events do
       from l in Link,
         join: e in ^user_messages(),
         on: e.assistant_id == l.assistant_id and e.account_id == l.account_id,
-        where: l.id == ^link_id and e.id == ^event_id and e.seq > l.last_read_seq,
+        join: a in Account,
+        on: a.id == l.account_id,
+        where: l.id == ^link_id and e.id == ^event_id and e.seq > l.last_read_seq and is_nil(a.deleted_at),
         select: l.account_id,
         update: [set: [last_read_seq: e.seq]]
 
@@ -279,7 +281,9 @@ defmodule AssistantLink.Events do
   def mark_delivered(account_id, event_id) do
     undelivered =
       from e in user_messages(),
-        where: e.id == ^event_id and e.account_id == ^account_id and is_nil(e.delivered_at),
+        join: a in Account,
+        on: a.id == e.account_id,
+        where: e.id == ^event_id and e.account_id == ^account_id and is_nil(e.delivered_at) and is_nil(a.deleted_at),
         select: e
 
     case Repo.update_all(undelivered, set: [delivered_at: DateTime.utc_now()]) do

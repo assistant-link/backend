@@ -33,7 +33,10 @@ defmodule AssistantLink.Delivery do
         {:error, {:already_started, pid}} -> pid
       end
 
-    GenServer.call(pid, {:connect, self()})
+    :ok = GenServer.call(pid, {:connect, self()})
+    # The connection gets `:DOWN` if the process crashes, and calls `connect/1` again.
+    Process.monitor(pid)
+    :ok
   catch
     # The process stopped after its last connection closed.
     :exit, {reason, {GenServer, :call, _call}} when reason in [:noproc, :normal] -> connect(link)
