@@ -3,19 +3,14 @@ defmodule AssistantLink.Accounts.PurgerTest do
   # sandbox's shared mode.
   use AssistantLink.DataCase, async: false
 
-  alias AssistantLink.Accounts
+  import AssistantLink.AccountsFixtures
+
   alias AssistantLink.Accounts.Account
   alias AssistantLink.Accounts.Purger
 
   defp deleted_account(days_ago) do
-    {:ok, %{credential: credential}} = Accounts.register_device()
-    scope = Accounts.get_scope_by_device_token(credential)
-    :ok = Accounts.delete_account(scope)
-
-    Repo.update_all(from(a in Account, where: a.id == ^scope.account.id),
-      set: [deleted_at: DateTime.shift(DateTime.utc_now(), day: -days_ago)]
-    )
-
+    scope = user_scope_fixture()
+    delete_account_fixture(scope, days_ago)
     scope.account
   end
 

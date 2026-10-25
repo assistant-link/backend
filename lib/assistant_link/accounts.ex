@@ -58,8 +58,8 @@ defmodule AssistantLink.Accounts do
 
   @doc """
   Returns the scope for a signed-in user: the user acting in the account of their membership.
-  Returns `nil` for `nil` or for a user without a membership in an account that is not deleted. Raises if the user has more than one,
-  since web sessions have no way to choose an account.
+  Returns `nil` for `nil` or for a user without a membership in an account that is not deleted. Raises
+  if the user has more than one, since web sessions have no way to choose an account.
   """
   @spec scope_for_user(User.t() | nil) :: Scope.t() | nil
   def scope_for_user(nil), do: nil
@@ -199,20 +199,21 @@ defmodule AssistantLink.Accounts do
   """
   @spec delete_account(Scope.t()) :: :ok | {:error, :unauthorized}
   def delete_account(%Scope{account: %Account{id: account_id}}) do
+    sole_member_ids =
+      from m in Membership,
+        join: n in Membership,
+        on: n.user_id == m.user_id,
+        where: m.account_id == ^account_id,
+        group_by: m.user_id,
+        having: count(n.id) == 1,
+        select: m.user_id
+
+    deleted = from a in Account, where: a.id == ^account_id and is_nil(a.deleted_at)
+
     result =
       Repo.transact(fn ->
-        member_ids = from m in Membership, where: m.account_id == ^account_id, select: m.user_id
-        deleted = from a in Account, where: a.id == ^account_id and is_nil(a.deleted_at)
-
         case Repo.update_all(deleted, set: [deleted_at: DateTime.utc_now()]) do
           {1, _} ->
-            sole_member_ids =
-              from m in Membership,
-                where: m.user_id in subquery(member_ids),
-                group_by: m.user_id,
-                having: count(m.id) == 1,
-                select: m.user_id
-
             Repo.delete_all(
               from t in UserToken,
                 where: t.user_id in subquery(sole_member_ids) and t.context in ["session", "login"]
@@ -244,6 +245,8 @@ defmodule AssistantLink.Accounts do
     Enum.each(ids, &purge_account(&1, cutoff))
   end
 
+  @purged_children [TextMessage, Event, PairingCode, Link, Assistant, Device, Membership]
+
   defp purge_account(account_id, cutoff) do
     Repo.transact(fn ->
       claim =
@@ -251,22 +254,20 @@ defmodule AssistantLink.Accounts do
           where: a.id == ^account_id and a.deleted_at < ^cutoff,
           lock: "FOR UPDATE SKIP LOCKED"
 
-      if Repo.exists?(claim) do
-        member_ids = Repo.all(from m in Membership, where: m.account_id == ^account_id, select: m.user_id)
-
-        Repo.delete_all(from t in TextMessage, where: t.account_id == ^account_id)
-        Repo.delete_all(from e in Event, where: e.account_id == ^account_id)
-        Repo.delete_all(from c in PairingCode, where: c.account_id == ^account_id)
-        Repo.delete_all(from l in Link, where: l.account_id == ^account_id)
-        Repo.delete_all(from a in Assistant, where: a.account_id == ^account_id)
-        Repo.delete_all(from d in Device, where: d.account_id == ^account_id)
-        Repo.delete_all(from m in Membership, where: m.account_id == ^account_id)
-        Repo.delete_all(from a in Account, where: a.id == ^account_id)
-        delete_users_without_membership(member_ids)
-      end
-
+      if Repo.exists?(claim), do: delete_account_data(account_id)
       {:ok, :ok}
     end)
+  end
+
+  defp delete_account_data(account_id) do
+    member_ids = Repo.all(from m in Membership, where: m.account_id == ^account_id, select: m.user_id)
+
+    for schema <- @purged_children do
+      Repo.delete_all(from r in schema, where: r.account_id == ^account_id)
+    end
+
+    Repo.delete_all(from a in Account, where: a.id == ^account_id)
+    delete_users_without_membership(member_ids)
   end
 
   defp delete_users_without_membership(user_ids) do

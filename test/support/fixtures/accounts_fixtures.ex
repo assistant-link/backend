@@ -10,6 +10,7 @@ defmodule AssistantLink.AccountsFixtures do
   import Ecto.Query
 
   alias AssistantLink.Accounts
+  alias AssistantLink.Accounts.Account
 
   def unique_user_email, do: "user#{System.unique_integer()}@example.com"
   def valid_user_password, do: "hello world!"
@@ -57,7 +58,7 @@ defmodule AssistantLink.AccountsFixtures do
   """
   def owned_account(user) do
     AssistantLink.Repo.one!(
-      from a in AssistantLink.Accounts.Account,
+      from a in Account,
         join: m in AssistantLink.Accounts.Membership,
         on: m.account_id == a.id,
         where: m.user_id == ^user.id and m.role == :owner
@@ -76,6 +77,15 @@ defmodule AssistantLink.AccountsFixtures do
       })
 
     {device, token}
+  end
+
+  @doc "Deletes the scope's account as a log out does, then backdates `deleted_at` by `days` days."
+  def delete_account_fixture(scope, days) do
+    :ok = Accounts.delete_account(scope)
+
+    AssistantLink.Repo.update_all(from(a in Account, where: a.id == ^scope.account.id),
+      set: [deleted_at: DateTime.shift(DateTime.utc_now(), day: -days)]
+    )
   end
 
   def set_password(user) do

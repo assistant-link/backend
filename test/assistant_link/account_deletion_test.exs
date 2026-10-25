@@ -49,14 +49,6 @@ defmodule AssistantLink.AccountDeletionTest do
     %{scope: scope, user: scope.user, credential: credential}
   end
 
-  defp deleted_ago(scope, days) do
-    :ok = Accounts.delete_account(scope)
-
-    Repo.update_all(from(a in Account, where: a.id == ^scope.account.id),
-      set: [deleted_at: DateTime.shift(DateTime.utc_now(), day: -days)]
-    )
-  end
-
   defp deleted_at(scope), do: Repo.get!(Account, scope.account.id).deleted_at
 
   defp counts(account_id) do
@@ -78,12 +70,11 @@ defmodule AssistantLink.AccountDeletionTest do
 
   describe "delete_account/1" do
     setup do
-      %{user: user, credential: credential} = context = email_scope()
+      %{user: user} = context = email_scope()
       :ok = Accounts.subscribe(context.scope.account.id)
-      session_token = Accounts.generate_user_session_token(user)
       {login_token, _} = generate_user_magic_link_token(user)
 
-      Map.merge(context, %{credential: credential, session_token: session_token, login_token: login_token})
+      Map.merge(context, %{session_token: Accounts.generate_user_session_token(user), login_token: login_token})
     end
 
     test "records deleted_at and keeps the data", %{scope: scope} do
@@ -163,7 +154,7 @@ defmodule AssistantLink.AccountDeletionTest do
 
       for %{scope: scope} <- [with_email, anonymous] do
         populate(scope)
-        deleted_ago(scope, 61)
+        delete_account_fixture(scope, 61)
         Accounts.generate_user_session_token(scope.user)
       end
 
@@ -191,7 +182,7 @@ defmodule AssistantLink.AccountDeletionTest do
       shared = email_scope()
       Repo.insert!(%Membership{account_id: doomed.scope.account.id, user_id: shared.user.id, role: :owner})
       Accounts.generate_user_session_token(shared.user)
-      deleted_ago(doomed.scope, 61)
+      delete_account_fixture(doomed.scope, 61)
 
       assert :ok = Accounts.purge_deleted_accounts()
 
@@ -208,7 +199,7 @@ defmodule AssistantLink.AccountDeletionTest do
       live = anonymous_scope()
       populate(recent.scope)
       populate(live.scope)
-      deleted_ago(recent.scope, 59)
+      delete_account_fixture(recent.scope, 59)
       recent_counts = counts(recent.scope.account.id)
       live_counts = counts(live.scope.account.id)
 
