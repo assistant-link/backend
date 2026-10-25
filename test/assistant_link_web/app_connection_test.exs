@@ -7,6 +7,7 @@ defmodule AssistantLinkWeb.AppConnectionTest do
   import AssistantLinkWeb.WebSocketClient
 
   alias AssistantLink.Accounts
+  alias AssistantLink.Events
 
   setup :start_server
   setup :register_device
@@ -65,6 +66,93 @@ defmodule AssistantLinkWeb.AppConnectionTest do
 
     refute_received {:ws, ^app, {:text, _message}}
     :ok = close(app)
+  end
+
+  describe "events" do
+    setup %{scope: scope} do
+      {link, token} = paired_link_fixture(scope)
+      %{link: link, token: token}
+    end
+
+    defp message_params, do: %{"text" => "Hi", "idempotency_key" => Ecto.UUID.generate(version: 7)}
+
+    test "sends event.created for the user's stored text message", %{app: app, scope: scope, link: link} do
+      {:ok, %{id: id}, :created} = Events.create_text_message(scope, link.assistant_id, message_params())
+
+      assert_receive {:ws, ^app,
+                      {:text, %{"jsonrpc" => "2.0", "method" => "event.created", "params" => params} = notice}}
+
+      refute Map.has_key?(notice, "id")
+
+      assert %{
+               "event" => %{
+                 "id" => ^id,
+                 "type" => "text_message",
+                 "sender" => "user",
+                 "delivery_status" => "sent",
+                 "text_message" => %{"text" => "Hi"}
+               }
+             } = params
+
+      :ok = close(app)
+    end
+
+    test "sends one event.updated when a Link first acknowledges the message", %{app: app, scope: scope, link: link} do
+      {:ok, %{id: id}, :created} = Events.create_text_message(scope, link.assistant_id, message_params())
+      assert_receive {:ws, ^app, {:text, %{"method" => "event.created"}}}
+
+      :ok = Events.mark_delivered(scope.account.id, id)
+      :ok = Events.mark_delivered(scope.account.id, id)
+
+      assert_receive {:ws, ^app,
+                      {:text,
+                       %{
+                         "method" => "event.updated",
+                         "params" => %{"event" => %{"id" => ^id, "delivery_status" => "delivered"}}
+                       }}}
+
+      refute_receive {:ws, ^app, {:text, _message}}
+      :ok = close(app)
+    end
+
+    test "sends every connection of the account the event, and no other account", %{
+      app: app,
+      scope: scope,
+      link: link,
+      port: port,
+      credential: credential
+    } do
+      {:ok, second_app} = open(port, "/api/v1/connect", credential)
+      other = register_device(%{conn: build_conn()})
+      {other_link, _token} = paired_link_fixture(other.scope)
+      {:ok, other_app} = open(port, "/api/v1/connect", other.credential)
+
+      {:ok, _event, :created} = Events.create_text_message(scope, link.assistant_id, message_params())
+
+      assert_receive {:ws, ^app, {:text, %{"method" => "event.created"}}}
+      assert_receive {:ws, ^second_app, {:text, %{"method" => "event.created"}}}
+      refute_receive {:ws, ^other_app, {:text, _message}}
+
+      {:ok, _event, :created} = Events.create_text_message(other.scope, other_link.assistant_id, message_params())
+
+      assert_receive {:ws, ^other_app, {:text, %{"method" => "event.created"}}}
+      refute_receive {:ws, ^app, {:text, _message}}
+      refute_receive {:ws, ^second_app, {:text, _message}}
+
+      for client <- [app, second_app, other_app], do: :ok = close(client)
+    end
+
+    test "sends nothing to an agent connection", %{scope: scope, link: link, token: token, port: port, app: app} do
+      {:ok, agent} = open(port, "/alp/v1/connect", token)
+      assert_receive {:ws, ^agent, {:text, %{"method" => "connection.ready"}}}
+
+      {:ok, _event, :created} = Events.create_text_message(scope, link.assistant_id, message_params())
+
+      assert_receive {:ws, ^app, {:text, %{"method" => "event.created"}}}
+      refute_receive {:ws, ^agent, {:text, _message}}
+      :ok = close(agent)
+      :ok = close(app)
+    end
   end
 
   test "answers unknown methods and malformed frames with JSON-RPC errors", %{app: app} do

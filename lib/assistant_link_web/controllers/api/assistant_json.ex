@@ -1,4 +1,5 @@
 defmodule AssistantLinkWeb.API.AssistantJSON do
+  alias AssistantLinkWeb.API.EventJSON
   alias AssistantLinkWeb.API.LinkJSON
 
   def index(%{assistants: assistants}), do: %{assistants: Enum.map(assistants, &assistant/1)}
@@ -13,7 +14,8 @@ defmodule AssistantLinkWeb.API.AssistantJSON do
       name: assistant.name,
       avatar: assistant.avatar,
       status: if(Enum.any?(links, &(&1.status == :online)), do: :online, else: :offline),
-      links: links
+      links: links,
+      latest_event: assistant.latest_event && EventJSON.event(assistant.latest_event)
     }
   end
 end

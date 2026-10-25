@@ -6,7 +6,8 @@ defmodule AssistantLinkWeb.Connection do
 
   - An agent connection keeps its Link online while it is open, records the Link's `last_active_at`
     when it opens and closes, and starts with `connection.ready`.
-  - An app connection sends its account's `link.status` changes.
+  - An app connection sends its account's `link.status` changes, and `event.created` and `event.updated`
+    with `{"event": event}` for its text messages.
 
   Both send `connection.closing` and close when their account is deleted. The service pings every
   `:ping_interval` ms, and the connection closes after `:timeout` ms without a frame from the client.
@@ -15,6 +16,7 @@ defmodule AssistantLinkWeb.Connection do
 
   alias AssistantLink.Accounts
   alias AssistantLink.Links
+  alias AssistantLinkWeb.API.EventJSON
   alias AssistantLinkWeb.JSONRPC
 
   @protocol_version "1"
@@ -70,6 +72,12 @@ defmodule AssistantLinkWeb.Connection do
 
   def handle_info({:link_status, _link_status}, state), do: {:ok, state}
 
+  def handle_info({notice, event}, %{role: {:app, _account_id}} = state)
+      when notice in [:event_created, :event_updated],
+      do: {:push, text(JSONRPC.notification(event_method(notice), EventJSON.show(%{event: event}))), state}
+
+  def handle_info({notice, _event}, state) when notice in [:event_created, :event_updated], do: {:ok, state}
+
   def handle_info(:account_deleted, state) do
     closing = JSONRPC.notification("connection.closing", %{reason: "account_deleted"})
     {:stop, :normal, {1000, "account_deleted"}, [text(closing)], state}
@@ -78,6 +86,9 @@ defmodule AssistantLinkWeb.Connection do
   @impl WebSock
   def terminate(_reason, %{role: {:agent, link}}), do: Links.disconnect(link)
   def terminate(_reason, _state), do: :ok
+
+  defp event_method(:event_created), do: "event.created"
+  defp event_method(:event_updated), do: "event.updated"
 
   defp schedule_ping(state) do
     Process.send_after(self(), :ping, state.ping_interval)

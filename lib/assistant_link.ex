@@ -6,5 +6,5 @@ defmodule AssistantLink do
   Contexts are also responsible for managing your data, regardless
   if it comes from the database, an external API or others.
   """
-  use Boundary, deps: [], exports: [Accounts, Accounts.Scope, Accounts.User, Assistants, Links]
+  use Boundary, deps: [], exports: [Accounts, Accounts.Scope, Accounts.User, Assistants, Events, Events.Event, Links]
 end

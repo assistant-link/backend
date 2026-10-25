@@ -13,6 +13,8 @@ defmodule AssistantLink.Assistants.Assistant do
   schema "assistants" do
     field :name, :string
     field :avatar, :string
+    field :last_event_seq, :integer, default: 0
+    field :latest_event, :any, virtual: true
 
     belongs_to :account, AssistantLink.Accounts.Account
     has_many :links, AssistantLink.Links.Link

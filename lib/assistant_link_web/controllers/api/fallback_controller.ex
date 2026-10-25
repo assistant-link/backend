@@ -24,6 +24,26 @@ defmodule AssistantLinkWeb.API.FallbackController do
     APIError.send_error(conn, 422, "expired_code", "This pairing code has expired. Ask the user for a new one.")
   end
 
+  def call(conn, {:error, :text_empty}) do
+    APIError.send_error(conn, 422, "text_empty", "The text must not be empty or only whitespace.")
+  end
+
+  def call(conn, {:error, :text_too_long}) do
+    APIError.send_error(conn, 422, "text_too_long", "The text must have at most 4000 characters.")
+  end
+
+  def call(conn, {:error, :invalid_params}) do
+    APIError.send_error(conn, 422, "invalid_params", "The parameters are not valid.")
+  end
+
+  def call(conn, {:error, :no_paired_link}) do
+    APIError.send_error(conn, 422, "no_paired_link", "This Assistant has no paired Assistant Link.")
+  end
+
+  def call(conn, {:error, :idempotency_key_conflict}) do
+    APIError.send_error(conn, 409, "idempotency_key_conflict", "This idempotency key was used for another message.")
+  end
+
   defp error_message(changeset) do
     changeset
     |> Ecto.Changeset.traverse_errors(&interpolate/1)

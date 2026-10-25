@@ -4,6 +4,7 @@ defmodule AssistantLink.Links do
 
   alias AssistantLink.Accounts.Scope
   alias AssistantLink.Assistants
+  alias AssistantLink.Events
   alias AssistantLink.Links.Link
   alias AssistantLink.Links.PairingCode
   alias AssistantLink.Presence
@@ -25,10 +26,20 @@ defmodule AssistantLink.Links do
         {:error, :not_found}
 
       assistant ->
-        %Link{account_id: assistant.account_id, assistant_id: assistant.id, assistant: assistant}
-        |> Link.create_changeset(attrs)
-        |> Repo.insert()
+        Repo.transact(fn -> insert_link(assistant, attrs) end)
     end
+  end
+
+  defp insert_link(assistant, attrs) do
+    changeset =
+      Link.create_changeset(
+        %Link{account_id: assistant.account_id, assistant_id: assistant.id, assistant: assistant},
+        attrs
+      )
+
+    with {:ok, link} <- Repo.insert(changeset),
+         {:ok, _event} <- Events.create_link_created(link),
+         do: {:ok, link}
   end
 
   @doc """

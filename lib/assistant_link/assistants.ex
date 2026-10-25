@@ -4,20 +4,37 @@ defmodule AssistantLink.Assistants do
 
   alias AssistantLink.Accounts.Scope
   alias AssistantLink.Assistants.Assistant
+  alias AssistantLink.Events.Event
   alias AssistantLink.Links.Link
   alias AssistantLink.Repo
 
-  @doc "Lists the scope's Assistants, oldest first, each with its Links, oldest first."
+  @doc """
+  Lists the scope's Assistants, oldest first, each with its Links, oldest first, and its latest event
+  (`latest_event`, `nil` while it has none).
+  """
   @spec list_assistants(Scope.t()) :: [Assistant.t()]
   def list_assistants(%Scope{account: %{id: account_id}}) do
     links = from l in Link, where: l.account_id == ^account_id, order_by: [asc: l.id]
 
-    Repo.all(
-      from a in Assistant,
-        where: a.account_id == ^account_id,
-        order_by: [asc: a.id],
-        preload: [links: ^links]
+    latest_events =
+      Map.new(
+        Repo.all(
+          from e in Event,
+            join: a in Assistant,
+            on: a.id == e.assistant_id and a.last_event_seq == e.seq,
+            where: a.account_id == ^account_id,
+            preload: :text_message
+        ),
+        &{&1.assistant_id, &1}
+      )
+
+    from(a in Assistant,
+      where: a.account_id == ^account_id,
+      order_by: [asc: a.id],
+      preload: [links: ^links]
     )
+    |> Repo.all()
+    |> Enum.map(&%{&1 | latest_event: latest_events[&1.id]})
   end
 
   @doc "Gets one of the scope's Assistants. Returns `nil` for an unknown id or another account's Assistant."

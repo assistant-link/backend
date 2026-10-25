@@ -4,6 +4,7 @@ defmodule AssistantLinkWeb.API.LinkControllerTest do
   import Ecto.Query
 
   alias AssistantLink.Assistants
+  alias AssistantLink.Events.Event
   alias AssistantLink.Links
   alias AssistantLink.Links.Link
   alias AssistantLink.Links.PairingCode
@@ -25,6 +26,19 @@ defmodule AssistantLinkWeb.API.LinkControllerTest do
 
       assert %{"link" => %{"id" => _, "label" => "laptop", "status" => "not_paired", "last_active_at" => nil}} =
                json_response(conn, 201)
+    end
+
+    test "stores a link_created event for the Link, and none for a rejected one", %{conn: conn, assistant: assistant} do
+      post(conn, ~p"/api/v1/assistants/#{assistant.id}/links", %{"label" => String.duplicate("a", 51)})
+      assert Repo.aggregate(Event, :count) == 0
+
+      %{"link" => %{"id" => link_id}} =
+        conn |> post(~p"/api/v1/assistants/#{assistant.id}/links", %{}) |> json_response(201)
+
+      assert [%Event{type: :link_created, sender: :system, seq: 1, link_id: ^link_id, delivered_at: nil}] =
+               Repo.all(Event)
+
+      assert Repo.reload!(assistant).last_event_seq == 1
     end
 
     test "the label is optional", %{conn: conn, assistant: assistant} do
