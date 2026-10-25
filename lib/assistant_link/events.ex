@@ -151,12 +151,14 @@ defmodule AssistantLink.Events do
   # A deleted payload has no text to differ from.
   defp replay(%Event{text_message: stored_text} = event, template, text)
        when is_nil(stored_text) or stored_text.text == text do
-    if Map.take(event, [:assistant_id, :sender, :link_id]) == Map.take(template, [:assistant_id, :sender, :link_id]),
+    if identity(event) == identity(template),
       do: {:ok, event, :existing},
       else: {:error, :idempotency_key_conflict}
   end
 
   defp replay(_event, _template, _text), do: {:error, :idempotency_key_conflict}
+
+  defp identity(event), do: {event.assistant_id, event.sender, event.link_id}
 
   defp store_text_message(template, params) do
     text = params["text"]
@@ -234,15 +236,15 @@ defmodule AssistantLink.Events do
   @spec count_deliverable(Ecto.UUID.t()) :: non_neg_integer()
   def count_deliverable(link_id), do: link_id |> deliverable() |> Repo.aggregate(:count)
 
+  defp user_messages, do: from(e in Event, where: e.type == :text_message and e.sender == :user)
+
   defp deliverable(link_id) do
-    from e in Event,
+    from e in user_messages(),
       join: l in Link,
       on: l.assistant_id == e.assistant_id and l.account_id == e.account_id,
       join: a in Account,
       on: a.id == e.account_id,
-      where:
-        l.id == ^link_id and is_nil(a.deleted_at) and e.seq > l.last_read_seq and e.type == :text_message and
-          e.sender == :user
+      where: l.id == ^link_id and is_nil(a.deleted_at) and e.seq > l.last_read_seq
   end
 
   @doc """
@@ -263,11 +265,9 @@ defmodule AssistantLink.Events do
   defp advance_cursor(link_id, event_id) do
     advance =
       from l in Link,
-        join: e in Event,
+        join: e in ^user_messages(),
         on: e.assistant_id == l.assistant_id and e.account_id == l.account_id,
-        where:
-          l.id == ^link_id and e.id == ^event_id and e.type == :text_message and e.sender == :user and
-            e.seq > l.last_read_seq,
+        where: l.id == ^link_id and e.id == ^event_id and e.seq > l.last_read_seq,
         select: l.account_id,
         update: [set: [last_read_seq: e.seq]]
 
@@ -281,10 +281,8 @@ defmodule AssistantLink.Events do
   @spec mark_delivered(Ecto.UUID.t(), Ecto.UUID.t()) :: :ok
   def mark_delivered(account_id, event_id) do
     undelivered =
-      from e in Event,
-        where:
-          e.id == ^event_id and e.account_id == ^account_id and e.type == :text_message and e.sender == :user and
-            is_nil(e.delivered_at),
+      from e in user_messages(),
+        where: e.id == ^event_id and e.account_id == ^account_id and is_nil(e.delivered_at),
         select: e
 
     case Repo.update_all(undelivered, set: [delivered_at: DateTime.utc_now()]) do

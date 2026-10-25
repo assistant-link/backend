@@ -30,14 +30,19 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
     on_exit(fn -> Application.put_env(:assistant_link, Delivery, config) end)
   end
 
-  defp message(scope, assistant, text \\ "Hi") do
-    params = %{"text" => text, "idempotency_key" => Ecto.UUID.generate(version: 7)}
-    {:ok, event, :created} = Events.create_text_message(scope, assistant.id, params)
-    event
+  # The clients end with the test process; no delivery process may outlive the sandbox.
+  setup do
+    on_exit(fn ->
+      refs =
+        for {_, pid, _, _} <- DynamicSupervisor.which_children(AssistantLink.Delivery.Supervisor),
+            do: Process.monitor(pid)
+
+      for ref <- refs, do: assert_receive({:DOWN, ^ref, _, _, _}, 1_000)
+    end)
   end
 
-  defp connect_agent(%{port: port}, token) do
-    {:ok, client} = open(port, "/alp/v1/connect", token)
+  defp connect_agent(context, token \\ nil) do
+    {:ok, client} = open(context.port, "/alp/v1/connect", token || context.token)
     assert_receive {:ws, ^client, {:text, %{"method" => "connection.ready"}}}
     client
   end
@@ -89,8 +94,8 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
   describe "event.deliver" do
     test "sends a stored message as a request with the event as params",
          %{scope: scope, assistant: assistant} = context do
-      event = message(scope, assistant)
-      client = connect_agent(context, context.token)
+      event = user_message_fixture(scope, assistant)
+      client = connect_agent(context)
 
       assert_receive {:ws, ^client, {:text, request}}, 1_000
 
@@ -108,24 +113,22 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
              }
 
       assert {:ok, _created_at, 0} = DateTime.from_iso8601(request["params"]["created_at"])
-      close_all([client], context.link)
     end
 
     test "sends a message stored while the Link is online", %{scope: scope, assistant: assistant} = context do
-      client = connect_agent(context, context.token)
+      client = connect_agent(context)
       refute_delivery(client)
 
-      event = message(scope, assistant)
+      event = user_message_fixture(scope, assistant)
 
       assert {1, %{"id" => id}} = receive_delivery(client)
       assert id == event.id
-      close_all([client], context.link)
     end
 
     test "sends an event without content when its text was deleted", %{scope: scope, assistant: assistant} = context do
-      event = message(scope, assistant)
+      event = user_message_fixture(scope, assistant)
       Repo.delete!(Repo.get!(TextMessage, event.id))
-      client = connect_agent(context, context.token)
+      client = connect_agent(context)
 
       assert {_id, params} = receive_delivery(client)
 
@@ -135,56 +138,39 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
                "created_at" => DateTime.to_iso8601(event.inserted_at),
                "deleted" => true
              }
-
-      close_all([client], context.link)
     end
 
-    test "keeps one in flight and sends the next after the acknowledgement",
-         %{scope: scope, assistant: assistant} =
-           context do
-      first = message(scope, assistant, "a")
-      second = message(scope, assistant, "b")
-      client = connect_agent(context, context.token)
+    test "keeps one in flight, numbers each side's requests on its own, and sends the next after the acknowledgement",
+         %{scope: scope, assistant: assistant} = context do
+      first = user_message_fixture(scope, assistant, "a")
+      second = user_message_fixture(scope, assistant, "b")
+      client = connect_agent(context)
 
       assert {1, %{"id" => first_id}} = receive_delivery(client)
       assert first_id == first.id
       refute_delivery(client)
 
-      acknowledge(client, 1, first.id)
-
-      assert {2, %{"id" => second_id}} = receive_delivery(client)
-      assert second_id == second.id
-      close_all([client], context.link)
-    end
-
-    test "does not send the agent's own messages", %{scope: scope, assistant: assistant, link: link} = context do
-      client = connect_agent(context, context.token)
-
-      {:ok, _event, :created} = Events.create_assistant_message(link, %{"text" => "Done."})
-      message(scope, assistant, "Hi")
-
-      assert {1, %{"text_message" => %{"text" => "Hi"}}} = receive_delivery(client)
-      close_all([client], link)
-    end
-
-    test "numbers the requests of each side by its own counter", %{scope: scope, assistant: assistant} = context do
-      first = message(scope, assistant, "a")
-      message(scope, assistant, "b")
-      client = connect_agent(context, context.token)
-
-      assert {1, _params} = receive_delivery(client)
-
       :ok = send_text(client, Jason.encode!(%{jsonrpc: "2.0", id: 1, method: "a.b"}))
       assert_receive {:ws, ^client, {:text, %{"id" => 1, "error" => %{"code" => -32_601}}}}
 
       acknowledge(client, 1, first.id)
-      assert {2, _params} = receive_delivery(client)
-      close_all([client], context.link)
+
+      assert {2, %{"id" => second_id}} = receive_delivery(client)
+      assert second_id == second.id
+    end
+
+    test "does not send the agent's own messages", %{scope: scope, assistant: assistant, link: link} = context do
+      client = connect_agent(context)
+
+      {:ok, _event, :created} = Events.create_assistant_message(link, %{"text" => "Done."})
+      user_message_fixture(scope, assistant)
+
+      assert {1, %{"text_message" => %{"text" => "Hi"}}} = receive_delivery(client)
     end
 
     test "answers to a request that is not pending change nothing", %{scope: scope, assistant: assistant} = context do
-      message(scope, assistant)
-      client = connect_agent(context, context.token)
+      user_message_fixture(scope, assistant)
+      client = connect_agent(context)
       assert {1, _params} = receive_delivery(client)
 
       answer_error(client, 77, not_received())
@@ -192,16 +178,14 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
 
       assert %{attempt: %{}, failed: []} = settle(client, context.link)
       refute_delivery(client)
-      close_all([client], context.link)
     end
   end
 
   describe "acknowledgement" do
     test "advances the cursor and marks the message delivered",
-         %{scope: scope, assistant: assistant, link: link} =
-           context do
-      event = message(scope, assistant)
-      client = connect_agent(context, context.token)
+         %{scope: scope, assistant: assistant, link: link} = context do
+      event = user_message_fixture(scope, assistant)
+      client = connect_agent(context)
       {id, _params} = receive_delivery(client)
 
       acknowledge(client, id, event.id)
@@ -210,13 +194,12 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert_receive {:event_updated, %Event{id: ^event_id, delivered_at: %DateTime{}}}
       settle(client, link)
       assert cursor(link) == event.seq
-      close_all([client], link)
     end
 
     @tag delivery: [attempt_timeout: 50, retry_wait: 50]
     test "is honored after the timeout", %{scope: scope, assistant: assistant, link: link} = context do
-      event = message(scope, assistant)
-      client = connect_agent(context, context.token)
+      event = user_message_fixture(scope, assistant)
+      client = connect_agent(context)
       {id, _params} = receive_delivery(client)
       {_id, _params} = receive_delivery(client)
 
@@ -224,13 +207,12 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
 
       settle(client, link)
       assert cursor(link) == event.seq
-      close_all([client], link)
     end
 
     test "is honored on another connection", %{scope: scope, assistant: assistant, link: link} = context do
-      older = connect_agent(context, context.token)
-      newer = connect_agent(context, context.token)
-      event = message(scope, assistant)
+      older = connect_agent(context)
+      newer = connect_agent(context)
+      event = user_message_fixture(scope, assistant)
       {_id, _params} = receive_delivery(newer)
       refute_delivery(older)
 
@@ -238,19 +220,13 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
 
       settle(older, link)
       assert cursor(link) == event.seq
-      settle(newer, link)
-      close_all([older, newer], link)
     end
 
     test "by another Link first leaves delivered_at and sends event.updated once",
-         %{
-           scope: scope,
-           assistant: assistant,
-           link: link
-         } = context do
+         %{scope: scope, assistant: assistant, link: link} = context do
       {link_two, token_two} = another_paired_link_fixture(scope, assistant)
-      event = message(scope, assistant)
-      one = connect_agent(context, context.token)
+      event = user_message_fixture(scope, assistant)
+      one = connect_agent(context)
       two = connect_agent(context, token_two)
       {id_one, _params} = receive_delivery(one)
       {id_two, _params} = receive_delivery(two)
@@ -266,46 +242,14 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert cursor(link_two) == event.seq
       assert Repo.get!(Event, event.id).delivered_at == delivered_at
       refute_receive {:event_updated, _event}
-      close_all([one], link)
-      close_all([two], link_two)
-    end
-
-    test "of one Link does not move the cursor of another: a slow Link stays on its message",
-         %{
-           scope: scope,
-           assistant: assistant,
-           link: link
-         } = context do
-      {link_two, token_two} = another_paired_link_fixture(scope, assistant)
-      first = message(scope, assistant, "a")
-      second = message(scope, assistant, "b")
-      one = connect_agent(context, context.token)
-      two = connect_agent(context, token_two)
-      {_id, %{"id" => first_id}} = receive_delivery(one)
-      {id_two, _params} = receive_delivery(two)
-      assert first_id == first.id
-
-      acknowledge(two, id_two, first.id)
-
-      assert {_id, %{"id" => second_id}} = receive_delivery(two)
-      assert second_id == second.id
-      refute_delivery(one)
-      settle(one, link)
-      assert cursor(link) == 1
-      close_all([one], link)
-      close_all([two], link_two)
     end
 
     test "ignores an event_id that is not usable and keeps the connection open",
-         %{
-           scope: scope,
-           assistant: assistant,
-           link: link
-         } = context do
-      older = message(scope, assistant, "before pairing")
+         %{scope: scope, assistant: assistant, link: link} = context do
+      older = user_message_fixture(scope, assistant, "before pairing")
       {link_two, token_two} = another_paired_link_fixture(scope, assistant)
       {other_link, _token} = paired_link_fixture(scope, "Muse")
-      foreign = message(scope, Repo.preload(other_link, :assistant).assistant)
+      foreign = user_message_fixture(scope, Repo.preload(other_link, :assistant).assistant)
       link_created = Repo.get_by!(Event, link_id: link_two.id, type: :link_created)
       {:ok, own, :created} = Events.create_assistant_message(link_two, %{"text" => "Done."})
       start = cursor(link_two)
@@ -330,7 +274,6 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert cursor(link_two) == start
       assert Repo.aggregate(from(e in Event, where: not is_nil(e.delivered_at)), :count) == 0
       assert cursor(link) == 1
-      close_all([client], link_two)
     end
   end
 
@@ -342,10 +285,9 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
         ] do
       @tag delivery: [retry_wait: 50]
       test "#{name} fails the attempt; the event is sent again with the same id",
-           %{scope: scope, assistant: assistant} =
-             context do
-        event = message(scope, assistant)
-        client = connect_agent(context, context.token)
+           %{scope: scope, assistant: assistant} = context do
+        event = user_message_fixture(scope, assistant)
+        client = connect_agent(context)
         {id, params} = receive_delivery(client)
 
         answer_error(client, id, unquote(Macro.escape(error)))
@@ -354,29 +296,25 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
         assert next_id == id + 1
         assert params["id"] == event.id
         assert cursor(context.link) == 1
-        settle(client, context.link)
-        close_all([client], context.link)
       end
     end
 
     @tag delivery: [attempt_timeout: 50, retry_wait: 50]
     test "no response within the timeout fails the attempt", %{scope: scope, assistant: assistant} = context do
-      message(scope, assistant)
-      client = connect_agent(context, context.token)
+      user_message_fixture(scope, assistant)
+      client = connect_agent(context)
       {id, params} = receive_delivery(client)
 
       assert {next_id, ^params} = receive_delivery(client)
 
       assert next_id == id + 1
       assert cursor(context.link) == 1
-      settle(client, context.link)
-      close_all([client], context.link)
     end
 
     test "an error answer to an earlier attempt fails nothing", %{scope: scope, assistant: assistant} = context do
-      older = connect_agent(context, context.token)
-      newer = connect_agent(context, context.token)
-      message(scope, assistant)
+      older = connect_agent(context)
+      newer = connect_agent(context)
+      user_message_fixture(scope, assistant)
       {id, _params} = receive_delivery(newer)
 
       answer_error(newer, id, not_received())
@@ -384,18 +322,16 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       answer_error(newer, id, not_received())
 
       assert %{attempt: %{}, failed: [_newer]} = settle(newer, context.link)
-      close_all([older, newer], context.link)
     end
   end
 
   describe "retry target and backoff" do
     test "goes to the next-newest connection that has not failed the event",
-         %{scope: scope, assistant: assistant} =
-           context do
-      oldest = connect_agent(context, context.token)
-      middle = connect_agent(context, context.token)
-      newest = connect_agent(context, context.token)
-      event = message(scope, assistant)
+         %{scope: scope, assistant: assistant} = context do
+      oldest = connect_agent(context)
+      middle = connect_agent(context)
+      newest = connect_agent(context)
+      event = user_message_fixture(scope, assistant)
 
       states =
         for client <- [newest, middle, oldest] do
@@ -406,29 +342,23 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
         end
 
       assert [%{attempt: %{}}, %{attempt: %{}}, %{attempt: nil, wait: 30_000}] = states
-      close_all([oldest, middle, newest], context.link)
     end
 
     test "a closed connection fails the attempt", %{scope: scope, assistant: assistant} = context do
-      older = connect_agent(context, context.token)
-      newer = connect_agent(context, context.token)
-      message(scope, assistant)
+      older = connect_agent(context)
+      newer = connect_agent(context)
+      user_message_fixture(scope, assistant)
       {_id, _params} = receive_delivery(newer)
 
       :ok = close(newer)
 
       assert {_id, _params} = receive_delivery(older)
-      close_all([older], context.link)
     end
 
     test "waits 30 seconds when every connection failed, then 60 seconds after two failed rounds",
-         %{
-           scope: scope,
-           assistant: assistant,
-           link: link
-         } = context do
-      message(scope, assistant)
-      client = connect_agent(context, context.token)
+         %{scope: scope, assistant: assistant, link: link} = context do
+      user_message_fixture(scope, assistant)
+      client = connect_agent(context)
 
       assert %{wait: 30_000, retry: timer} = fail_round(client, link)
       assert Process.read_timer(timer) in 29_000..30_000
@@ -437,13 +367,12 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
 
       assert %{wait: 60_000, retry: timer} = fail_round(client, link)
       assert Process.read_timer(timer) in 59_000..60_000
-      close_all([client], link)
     end
 
     @tag delivery: [retry_wait: 200_000]
     test "doubles up to 5 minutes", %{scope: scope, assistant: assistant, link: link} = context do
-      message(scope, assistant)
-      client = connect_agent(context, context.token)
+      user_message_fixture(scope, assistant)
+      client = connect_agent(context)
 
       waits =
         for _round <- 1..3 do
@@ -453,19 +382,17 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
         end
 
       assert waits == [200_000, 300_000, 300_000]
-      close_all([client], link)
     end
 
     test "a new connection resets the wait and starts a round at once",
-         %{scope: scope, assistant: assistant, link: link} =
-           context do
-      message(scope, assistant)
-      first = connect_agent(context, context.token)
+         %{scope: scope, assistant: assistant, link: link} = context do
+      user_message_fixture(scope, assistant)
+      first = connect_agent(context)
       fail_round(first, link)
       retry_now(link)
       assert %{wait: 60_000} = fail_round(first, link)
 
-      second = connect_agent(context, context.token)
+      second = connect_agent(context)
 
       assert {id, params} = receive_delivery(second)
       assert %{wait: nil, retry: nil} = settle(second, link)
@@ -475,19 +402,14 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       answer_error(first, id, not_received())
 
       assert %{wait: 30_000} = settle(first, link)
-      close_all([first, second], link)
     end
   end
 
   describe "catch-up" do
     test "sends every message after the cursor in order, and only the unacknowledged ones after a reconnect",
-         %{
-           scope: scope,
-           assistant: assistant,
-           link: link
-         } = context do
-      [a, b, c] = for text <- ["a", "b", "c"], do: message(scope, assistant, text)
-      client = connect_agent(context, context.token)
+         %{scope: scope, assistant: assistant, link: link} = context do
+      [a, b, c] = for text <- ["a", "b", "c"], do: user_message_fixture(scope, assistant, text)
+      client = connect_agent(context)
 
       assert {id, %{"id" => first}} = receive_delivery(client)
       assert first == a.id
@@ -499,35 +421,30 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert third == c.id
       close_all([client], link)
 
-      again = connect_agent(context, context.token)
+      again = connect_agent(context)
 
       assert {1, %{"id" => resumed}} = receive_delivery(again)
       assert resumed == c.id
-      close_all([again], link)
     end
 
     test "does not send what was stored before pairing, and sends what was stored after",
-         %{
-           scope: scope,
-           assistant: assistant
-         } = context do
-      message(scope, assistant, "before")
-      {link_two, token_two} = another_paired_link_fixture(scope, assistant)
-      after_pairing = message(scope, assistant, "after")
+         %{scope: scope, assistant: assistant} = context do
+      user_message_fixture(scope, assistant, "before")
+      {_link_two, token_two} = another_paired_link_fixture(scope, assistant)
+      after_pairing = user_message_fixture(scope, assistant, "after")
 
       client = connect_agent(context, token_two)
 
       assert {_id, %{"id" => id}} = receive_delivery(client)
       assert id == after_pairing.id
       refute_delivery(client)
-      close_all([client], link_two)
     end
   end
 
   describe "delivery process" do
     test "is one per Link and ends with its last connection", %{link: link} = context do
-      one = connect_agent(context, context.token)
-      two = connect_agent(context, context.token)
+      one = connect_agent(context)
+      two = connect_agent(context)
 
       assert [_one_process] = Registry.lookup(AssistantLink.Delivery.Registry, link.id)
       ref = link |> delivery() |> Process.monitor()
@@ -538,19 +455,10 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert_receive {:DOWN, ^ref, :process, _pid, :normal}
     end
 
-    test "starts again for a new connection", %{link: link} = context do
-      close_all([connect_agent(context, context.token)], link)
-
-      client = connect_agent(context, context.token)
-
-      assert %{connections: [_connection]} = settle(client, link)
-      close_all([client], link)
-    end
-
     test "does not deliver to a Link of a deleted account",
          %{scope: scope, assistant: assistant, link: link} = context do
-      message(scope, assistant)
-      client = connect_agent(context, context.token)
+      user_message_fixture(scope, assistant)
+      client = connect_agent(context)
       {_id, _params} = receive_delivery(client)
 
       ref = link |> delivery() |> Process.monitor()

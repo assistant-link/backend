@@ -54,14 +54,11 @@ defmodule AssistantLink.Delivery do
   @impl GenServer
   def init(%Link{} = link) do
     :ok = Phoenix.PubSub.subscribe(AssistantLink.PubSub, Accounts.topic(link.account_id))
-    config = Application.fetch_env!(:assistant_link, __MODULE__)
 
     {:ok,
      %{
        link_id: link.id,
        assistant_id: link.assistant_id,
-       attempt_timeout: Keyword.fetch!(config, :attempt_timeout),
-       retry_wait: Keyword.fetch!(config, :retry_wait),
        connections: [],
        event: nil,
        attempt: nil,
@@ -98,7 +95,7 @@ defmodule AssistantLink.Delivery do
 
     case state do
       %{connections: []} -> {:stop, :normal, state}
-      %{attempt: %{pid: ^pid}} -> {:noreply, state |> cancel_attempt() |> deliver()}
+      %{attempt: %{pid: ^pid}} -> {:noreply, deliver(%{state | attempt: nil})}
       _other -> {:noreply, state}
     end
   end
@@ -114,35 +111,32 @@ defmodule AssistantLink.Delivery do
     event = Events.next_deliverable(state.link_id)
 
     cond do
-      is_nil(event) -> %{cancel_retry(cancel_attempt(state)) | event: nil}
+      is_nil(event) -> reset(state)
       state.event && event.id == state.event.id -> if state.attempt || state.retry, do: state, else: deliver(state)
-      true -> deliver(%{cancel_retry(cancel_attempt(state)) | event: event, failed: [], wait: nil})
+      true -> deliver(%{reset(state) | event: event})
     end
   end
+
+  # The timeout of the dropped attempt still arrives; its ref no longer matches.
+  defp reset(state), do: %{cancel_retry(state) | attempt: nil, event: nil, failed: [], wait: nil}
 
   defp deliver(%{event: event} = state) do
     case Enum.find(state.connections, &(&1 not in state.failed)) do
       nil ->
-        wait = if state.wait, do: min(state.wait * 2, @max_wait), else: state.retry_wait
+        wait = if state.wait, do: min(state.wait * 2, @max_wait), else: config(:retry_wait)
         %{state | wait: wait, retry: Process.send_after(self(), :retry, wait)}
 
       pid ->
         ref = make_ref()
         send(pid, {:event_deliver, ref, event})
-        timer = Process.send_after(self(), {:attempt_timeout, ref}, state.attempt_timeout)
-        %{state | attempt: %{ref: ref, pid: pid, timer: timer}}
+        Process.send_after(self(), {:attempt_timeout, ref}, config(:attempt_timeout))
+        %{state | attempt: %{ref: ref, pid: pid}}
     end
   end
 
-  defp fail_attempt(%{attempt: %{pid: pid}} = state),
-    do: deliver(%{cancel_attempt(state) | failed: [pid | state.failed]})
+  defp fail_attempt(%{attempt: %{pid: pid}} = state), do: deliver(%{state | attempt: nil, failed: [pid | state.failed]})
 
-  defp cancel_attempt(%{attempt: nil} = state), do: state
-
-  defp cancel_attempt(%{attempt: %{timer: timer}} = state) do
-    Process.cancel_timer(timer)
-    %{state | attempt: nil}
-  end
+  defp config(key), do: :assistant_link |> Application.fetch_env!(__MODULE__) |> Keyword.fetch!(key)
 
   defp cancel_retry(%{retry: nil} = state), do: state
 

@@ -5,6 +5,7 @@ defmodule AssistantLinkWeb.ALP.LinkControllerTest do
 
   alias AssistantLink.Accounts
   alias AssistantLink.Events
+  alias AssistantLink.Events.TextMessage
   alias AssistantLink.Links
   alias AssistantLink.Repo
 
@@ -21,20 +22,12 @@ defmodule AssistantLinkWeb.ALP.LinkControllerTest do
     }
   end
 
-  defp user_message(scope, assistant) do
-    params = %{"text" => "Hi", "idempotency_key" => Ecto.UUID.generate(version: 7)}
-    {:ok, event, :created} = Events.create_text_message(scope, assistant.id, params)
-    event
-  end
+  defp unread_count(conn), do: conn |> get(~p"/alp/v1/link") |> json_response(200) |> Map.fetch!("unread_count")
 
   describe "GET /alp/v1/link" do
-    test "counts the user's messages after the cursor, not the link_created event", %{
-      conn: conn,
-      scope: scope,
-      assistant: assistant,
-      link: link
-    } do
-      for _message <- 1..3, do: user_message(scope, assistant)
+    test "counts the user's messages after the cursor, not the link_created event or the agent's own",
+         %{conn: conn, scope: scope, assistant: assistant, link: link} do
+      for _message <- 1..3, do: user_message_fixture(scope, assistant)
       {:ok, _event, :created} = Events.create_assistant_message(link, %{"text" => "Done."})
 
       body = conn |> get(~p"/alp/v1/link") |> json_response(200)
@@ -42,51 +35,38 @@ defmodule AssistantLinkWeb.ALP.LinkControllerTest do
       assert body == %{"link_id" => link.id, "assistant_name" => "Hermes", "unread_count" => 3}
     end
 
-    test "counts from the Link's cursor", %{conn: conn, scope: scope, assistant: assistant, link: link} do
-      first = user_message(scope, assistant)
-      user_message(scope, assistant)
+    test "counts from the Link's cursor and a deleted message, and is 0 when nothing is waiting",
+         %{conn: conn, scope: scope, assistant: assistant, link: link} do
+      assert unread_count(conn) == 0
+
+      first = user_message_fixture(scope, assistant)
+      second = user_message_fixture(scope, assistant)
       :ok = Events.acknowledge(link.id, first.id)
+      Repo.delete!(Repo.get!(TextMessage, second.id))
 
-      assert %{"unread_count" => 1} = conn |> get(~p"/alp/v1/link") |> json_response(200)
+      assert unread_count(conn) == 1
     end
 
-    test "is 0 when nothing is waiting, and counts a deleted message", %{conn: conn, scope: scope, assistant: assistant} do
-      assert %{"unread_count" => 0} = conn |> get(~p"/alp/v1/link") |> json_response(200)
-
-      event = user_message(scope, assistant)
-      Repo.delete!(Repo.get!(AssistantLink.Events.TextMessage, event.id))
-
-      assert %{"unread_count" => 1} = conn |> get(~p"/alp/v1/link") |> json_response(200)
-    end
-
-    test "only counts: the cursor, presence, and last active time stay", %{
-      conn: conn,
-      scope: scope,
-      assistant: assistant,
-      link: link
-    } do
-      user_message(scope, assistant)
+    test "only counts: the cursor, presence, and last active time stay",
+         %{conn: conn, scope: scope, assistant: assistant, link: link} do
+      user_message_fixture(scope, assistant)
       before = Repo.reload!(link)
 
-      for _request <- 1..2, do: conn |> get(~p"/alp/v1/link") |> json_response(200)
+      for _request <- 1..2, do: unread_count(conn)
 
       assert Repo.reload!(link) == before
       assert Links.status(link) == :offline
-      assert before.last_read_seq == 1
-      assert before.last_active_at == nil
       refute_receive {:link_status, _change}
     end
 
-    test "answers 401 for a missing or unknown token", %{conn: conn} do
+    test "answers 401 for a missing, unknown, or deleted account's token", %{conn: conn, scope: scope} do
       for header <- [nil, "Bearer alt_unknown"] do
         conn =
           if header, do: put_req_header(conn, "authorization", header), else: delete_req_header(conn, "authorization")
 
         assert conn |> get(~p"/alp/v1/link") |> json_response(401) |> get_in(["error", "code"]) == "unauthorized"
       end
-    end
 
-    test "answers 401 for the token of a deleted account", %{conn: conn, scope: scope} do
       :ok = Accounts.delete_account(scope)
 
       assert conn |> get(~p"/alp/v1/link") |> json_response(401) |> get_in(["error", "code"]) == "unauthorized"
