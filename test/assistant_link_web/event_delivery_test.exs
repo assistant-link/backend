@@ -85,9 +85,9 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
 
   defp cursor(link), do: Repo.reload!(link).last_read_seq
 
-  defp close_all(clients, link) do
+  defp close_and_wait(client, link) do
     ref = link |> delivery() |> Process.monitor()
-    Enum.each(clients, &close/1)
+    close(client)
     assert_receive {:DOWN, ^ref, :process, _pid, :normal}
   end
 
@@ -113,16 +113,6 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
              }
 
       assert {:ok, _created_at, 0} = DateTime.from_iso8601(request["params"]["created_at"])
-    end
-
-    test "sends a message stored while the Link is online", %{scope: scope, assistant: assistant} = context do
-      client = connect_agent(context)
-      refute_delivery(client)
-
-      event = user_message_fixture(scope, assistant)
-
-      assert {1, %{"id" => id}} = receive_delivery(client)
-      assert id == event.id
     end
 
     test "sends an event without content when its text was deleted", %{scope: scope, assistant: assistant} = context do
@@ -159,8 +149,10 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert second_id == second.id
     end
 
-    test "does not send the agent's own messages", %{scope: scope, assistant: assistant, link: link} = context do
+    test "sends a message stored while the Link is online, but not the agent's own",
+         %{scope: scope, assistant: assistant, link: link} = context do
       client = connect_agent(context)
+      refute_delivery(client)
 
       {:ok, _event, :created} = Events.create_assistant_message(link, %{"text" => "Done."})
       user_message_fixture(scope, assistant)
@@ -192,19 +184,6 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
 
       event_id = event.id
       assert_receive {:event_updated, %Event{id: ^event_id, delivered_at: %DateTime{}}}
-      settle(client, link)
-      assert cursor(link) == event.seq
-    end
-
-    @tag delivery: [attempt_timeout: 50, retry_wait: 50]
-    test "is honored after the timeout", %{scope: scope, assistant: assistant, link: link} = context do
-      event = user_message_fixture(scope, assistant)
-      client = connect_agent(context)
-      {id, _params} = receive_delivery(client)
-      {_id, _params} = receive_delivery(client)
-
-      acknowledge(client, id, event.id)
-
       settle(client, link)
       assert cursor(link) == event.seq
     end
@@ -300,15 +279,20 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
     end
 
     @tag delivery: [attempt_timeout: 50, retry_wait: 50]
-    test "no response within the timeout fails the attempt", %{scope: scope, assistant: assistant} = context do
-      user_message_fixture(scope, assistant)
+    test "no response within the timeout fails the attempt, and a late result is still honored",
+         %{scope: scope, assistant: assistant, link: link} = context do
+      event = user_message_fixture(scope, assistant)
       client = connect_agent(context)
       {id, params} = receive_delivery(client)
 
       assert {next_id, ^params} = receive_delivery(client)
-
       assert next_id == id + 1
-      assert cursor(context.link) == 1
+      assert cursor(link) == 1
+
+      acknowledge(client, id, event.id)
+
+      settle(client, link)
+      assert cursor(link) == event.seq
     end
 
     test "an error answer to an earlier attempt fails nothing", %{scope: scope, assistant: assistant} = context do
@@ -355,33 +339,20 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert {_id, _params} = receive_delivery(older)
     end
 
-    test "waits 30 seconds when every connection failed, then 60 seconds after two failed rounds",
+    test "waits 30 seconds when every connection failed, doubling per failed round up to 5 minutes",
          %{scope: scope, assistant: assistant, link: link} = context do
       user_message_fixture(scope, assistant)
       client = connect_agent(context)
 
-      assert %{wait: 30_000, retry: timer} = fail_round(client, link)
-      assert Process.read_timer(timer) in 29_000..30_000
-
-      retry_now(link)
-
-      assert %{wait: 60_000, retry: timer} = fail_round(client, link)
-      assert Process.read_timer(timer) in 59_000..60_000
-    end
-
-    @tag delivery: [retry_wait: 200_000]
-    test "doubles up to 5 minutes", %{scope: scope, assistant: assistant, link: link} = context do
-      user_message_fixture(scope, assistant)
-      client = connect_agent(context)
-
       waits =
-        for _round <- 1..3 do
-          %{wait: wait} = fail_round(client, link)
+        for _round <- 1..6 do
+          %{wait: wait, retry: timer} = fail_round(client, link)
+          assert Process.read_timer(timer) in (wait - 1_000)..wait
           retry_now(link)
           wait
         end
 
-      assert waits == [200_000, 300_000, 300_000]
+      assert waits == [30_000, 60_000, 120_000, 240_000, 300_000, 300_000]
     end
 
     test "a new connection resets the wait and starts a round at once",
@@ -419,7 +390,7 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       acknowledge(client, id, b.id)
       assert {_id, %{"id" => third}} = receive_delivery(client)
       assert third == c.id
-      close_all([client], link)
+      close_and_wait(client, link)
 
       again = connect_agent(context)
 

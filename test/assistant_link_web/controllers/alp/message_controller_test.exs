@@ -26,7 +26,8 @@ defmodule AssistantLinkWeb.ALP.MessageControllerTest do
   defp stored_count, do: Repo.aggregate(TextMessage, :count)
 
   describe "POST /alp/v1/messages" do
-    test "stores the message as the Assistant's and answers 201", %{conn: conn, link: link} do
+    test "stores the message as the Assistant's and answers 201, leaving the Link offline",
+         %{conn: conn, link: link} do
       conn = post_message(conn, %{"text" => "Your reminder is set.", "idempotency_key" => key()})
 
       assert %{"message_id" => id, "created_at" => created_at} = body = json_response(conn, 201)
@@ -40,6 +41,9 @@ defmodule AssistantLinkWeb.ALP.MessageControllerTest do
 
       assert Repo.get!(TextMessage, id).text == "Your reminder is set."
       assert_receive {:event_created, %Event{id: ^id, sender: :assistant}}
+      assert Links.status(link) == :offline
+      assert Repo.reload!(link).last_active_at == nil
+      refute_receive {:link_status, _change}
     end
 
     test "works without an idempotency key", %{conn: conn} do
@@ -49,15 +53,6 @@ defmodule AssistantLinkWeb.ALP.MessageControllerTest do
 
       assert [_first, _second] = Enum.uniq(ids)
       assert stored_count() == 2
-    end
-
-    test "leaves the Link offline and does not change presence or last active time", %{conn: conn, link: link} do
-      conn = post_message(conn, %{"text" => "Hi", "idempotency_key" => key()})
-
-      assert json_response(conn, 201)
-      assert Links.status(link) == :offline
-      assert Repo.reload!(link).last_active_at == nil
-      refute_receive {:link_status, _change}
     end
 
     test "answers 200 with the stored values for a repeated key and stores one message", %{conn: conn} do
@@ -125,7 +120,6 @@ defmodule AssistantLinkWeb.ALP.MessageControllerTest do
         assert error_code(conn, 422) == code
       end
 
-      assert json_response(post_message(conn, %{"idempotency_key" => key()}), 422)
       assert stored_count() == 0
     end
 
@@ -133,7 +127,8 @@ defmodule AssistantLinkWeb.ALP.MessageControllerTest do
       assert json_response(post_message(conn, %{"text" => String.duplicate("😀", 4000)}), 201)
     end
 
-    test "answers 401 for a missing, unknown, or account token", %{conn: conn, credential: credential} do
+    test "answers 401 for a missing, unknown, account, or deleted account's token",
+         %{conn: conn, scope: scope, credential: credential} do
       for header <- [nil, "Bearer alt_unknown", "Bearer " <> credential] do
         conn =
           if header, do: put_req_header(conn, "authorization", header), else: delete_req_header(conn, "authorization")
@@ -141,10 +136,6 @@ defmodule AssistantLinkWeb.ALP.MessageControllerTest do
         assert error_code(post_message(conn, %{"text" => "Hi"}), 401) == "unauthorized"
       end
 
-      assert stored_count() == 0
-    end
-
-    test "answers 401 for the token of a deleted account", %{conn: conn, scope: scope} do
       :ok = Accounts.delete_account(scope)
 
       assert error_code(post_message(conn, %{"text" => "Hi"}), 401) == "unauthorized"

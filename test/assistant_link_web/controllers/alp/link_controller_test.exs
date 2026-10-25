@@ -25,14 +25,18 @@ defmodule AssistantLinkWeb.ALP.LinkControllerTest do
   defp unread_count(conn), do: conn |> get(~p"/alp/v1/link") |> json_response(200) |> Map.fetch!("unread_count")
 
   describe "GET /alp/v1/link" do
-    test "counts the user's messages after the cursor, not the link_created event or the agent's own",
+    test "counts the user's messages after the cursor, not the link_created event or the agent's own, and only counts",
          %{conn: conn, scope: scope, assistant: assistant, link: link} do
       for _message <- 1..3, do: user_message_fixture(scope, assistant)
       {:ok, _event, :created} = Events.create_assistant_message(link, %{"text" => "Done."})
+      before = Repo.reload!(link)
 
       body = conn |> get(~p"/alp/v1/link") |> json_response(200)
 
       assert body == %{"link_id" => link.id, "assistant_name" => "Hermes", "unread_count" => 3}
+      assert Repo.reload!(link) == before
+      assert Links.status(link) == :offline
+      refute_receive {:link_status, _change}
     end
 
     test "counts from the Link's cursor and a deleted message, and is 0 when nothing is waiting",
@@ -45,18 +49,6 @@ defmodule AssistantLinkWeb.ALP.LinkControllerTest do
       Repo.delete!(Repo.get!(TextMessage, second.id))
 
       assert unread_count(conn) == 1
-    end
-
-    test "only counts: the cursor, presence, and last active time stay",
-         %{conn: conn, scope: scope, assistant: assistant, link: link} do
-      user_message_fixture(scope, assistant)
-      before = Repo.reload!(link)
-
-      for _request <- 1..2, do: unread_count(conn)
-
-      assert Repo.reload!(link) == before
-      assert Links.status(link) == :offline
-      refute_receive {:link_status, _change}
     end
 
     test "answers 401 for a missing, unknown, or deleted account's token", %{conn: conn, scope: scope} do

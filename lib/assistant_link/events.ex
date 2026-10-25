@@ -149,14 +149,11 @@ defmodule AssistantLink.Events do
   defp cast_text_uuid(_id), do: :error
 
   # A deleted payload has no text to differ from.
-  defp replay(%Event{text_message: stored_text} = event, template, text)
-       when is_nil(stored_text) or stored_text.text == text do
-    if identity(event) == identity(template),
+  defp replay(%Event{text_message: stored_text} = event, template, text) do
+    if (is_nil(stored_text) or stored_text.text == text) and identity(event) == identity(template),
       do: {:ok, event, :existing},
       else: {:error, :idempotency_key_conflict}
   end
-
-  defp replay(_event, _template, _text), do: {:error, :idempotency_key_conflict}
 
   defp identity(event), do: {event.assistant_id, event.sender, event.link_id}
 

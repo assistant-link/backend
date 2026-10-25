@@ -88,7 +88,7 @@ defmodule AssistantLink.Delivery do
   @impl GenServer
   def handle_info({:attempt_timeout, attempt}, %{attempt: %{ref: attempt}} = state), do: {:noreply, fail_attempt(state)}
 
-  def handle_info(:retry, state), do: {:noreply, run(cancel_retry(%{state | failed: []}))}
+  def handle_info(:retry, state), do: {:noreply, run(%{state | failed: [], retry: nil})}
 
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
     state = %{state | connections: List.delete(state.connections, pid), failed: List.delete(state.failed, pid)}
