@@ -3,7 +3,6 @@ defmodule AssistantLinkWeb.API.EventJSON do
 
   def show(%{event: event}), do: %{event: event(event)}
 
-  @doc "An event with its payload under its type, and no payload key once deleted."
   def event(event) do
     base = %{
       id: event.id,
@@ -26,6 +25,6 @@ defmodule AssistantLinkWeb.API.EventJSON do
 
   defp delivery_status(_event), do: %{}
 
-  defp payload(%{type: :text_message, text_message: %{text: text}}), do: %{text_message: %{text: text}}
+  defp payload(%{text_message: %{text: text}}), do: %{text_message: %{text: text}}
   defp payload(_event), do: %{}
 end

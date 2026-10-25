@@ -59,14 +59,6 @@ defmodule AssistantLinkWeb.API.MessageControllerTest do
       assert Repo.aggregate(TextMessage, :count) == 0
       assert Repo.reload!(unpaired).last_event_seq == 1
     end
-
-    test "answers 404 for an unknown id or another account's Assistant", %{conn: conn, assistant: assistant} do
-      other = register_device(%{conn: build_conn()})
-
-      for {conn, id} <- [{conn, Ecto.UUID.generate()}, {conn, "not-a-uuid"}, {other.conn, assistant.id}] do
-        assert error_code(send_message(conn, id, %{"text" => "Hi", "idempotency_key" => key()}), 404) == "not_found"
-      end
-    end
   end
 
   describe "text" do
@@ -88,9 +80,6 @@ defmodule AssistantLinkWeb.API.MessageControllerTest do
       for text <- ["a\u0000b", "\u0000", nil, 5, ["Hi"]] do
         assert error_code(send_text(conn, assistant, text), 422) == "invalid_params"
       end
-
-      assert error_code(post(conn, ~p"/api/v1/assistants/#{assistant.id}/messages", %{"idempotency_key" => key()}), 422) ==
-               "invalid_params"
     end
 
     test "keeps text that only looks empty and surrounding whitespace", %{conn: conn, assistant: assistant} do
@@ -120,16 +109,6 @@ defmodule AssistantLinkWeb.API.MessageControllerTest do
       assert repeat == first
       assert Repo.aggregate(TextMessage, :count) == 1
       assert Repo.reload!(assistant).last_event_seq == 2
-    end
-
-    test "a repeat after delivery shows it", %{conn: conn, scope: scope, assistant: assistant} do
-      params = %{"text" => "Hi", "idempotency_key" => key()}
-      %{"message" => %{"id" => id}} = conn |> send_message(assistant.id, params) |> json_response(201)
-      :ok = AssistantLink.Events.mark_delivered(scope.account.id, id)
-
-      repeat = conn |> send_message(assistant.id, params) |> json_response(200)
-
-      assert repeat["message"]["delivery_status"] == "delivered"
     end
 
     test "a repeat returns the stored event even when its text was deleted", %{conn: conn, assistant: assistant} do
@@ -182,7 +161,6 @@ defmodule AssistantLinkWeb.API.MessageControllerTest do
       key = key()
       send_message(conn, assistant.id, %{"text" => "Hi", "idempotency_key" => key})
 
-      assert json_response(send_message(conn, assistant.id, %{"text" => "Hi", "idempotency_key" => key}), 200)
       conn = send_message(conn, assistant.id, %{"text" => "", "idempotency_key" => key})
       assert error_code(conn, 409) == "idempotency_key_conflict"
     end

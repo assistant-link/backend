@@ -154,8 +154,6 @@ defmodule AssistantLink.Events do
   end
 
   defp insert_text_message(assistant, text, key) do
-    paired? = Repo.exists?(from l in Link, where: l.assistant_id == ^assistant.id and not is_nil(l.paired_at))
-
     event = %Event{
       account_id: assistant.account_id,
       assistant_id: assistant.id,
@@ -164,7 +162,8 @@ defmodule AssistantLink.Events do
       idempotency_key: key
     }
 
-    with {:paired, true} <- {:paired, paired?},
+    with {:paired, true} <-
+           {:paired, Repo.exists?(from l in Link, where: l.assistant_id == ^assistant.id and not is_nil(l.paired_at))},
          {:ok, event} <- insert_event(event) do
       payload = Repo.insert!(%TextMessage{event_id: event.id, account_id: event.account_id, text: text})
       {:ok, %{event | text_message: payload}}

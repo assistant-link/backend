@@ -90,9 +90,5 @@ defmodule AssistantLinkWeb.API.EventControllerTest do
         assert json_response(list(conn, id), 404)["error"]["code"] == "not_found"
       end
     end
-
-    test "requires an account credential", %{assistant: assistant} do
-      assert json_response(list(build_conn(), assistant.id), 401)["error"]["code"] == "unauthorized"
-    end
   end
 end

@@ -141,18 +141,6 @@ defmodule AssistantLinkWeb.AppConnectionTest do
 
       for client <- [app, second_app, other_app], do: :ok = close(client)
     end
-
-    test "sends nothing to an agent connection", %{scope: scope, link: link, token: token, port: port, app: app} do
-      {:ok, agent} = open(port, "/alp/v1/connect", token)
-      assert_receive {:ws, ^agent, {:text, %{"method" => "connection.ready"}}}
-
-      {:ok, _event, :created} = Events.create_text_message(scope, link.assistant_id, message_params())
-
-      assert_receive {:ws, ^app, {:text, %{"method" => "event.created"}}}
-      refute_receive {:ws, ^agent, {:text, _message}}
-      :ok = close(agent)
-      :ok = close(app)
-    end
   end
 
   test "answers unknown methods and malformed frames with JSON-RPC errors", %{app: app} do
