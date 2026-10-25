@@ -5,7 +5,9 @@ defmodule AssistantLinkWeb.Connection do
   neither connection implements methods yet.
 
   - An agent connection keeps its Link online while it is open, records the Link's `last_active_at`
-    when it opens and closes, and starts with `connection.ready`.
+    when it opens and closes, and starts with `connection.ready`. It sends the events that
+    `AssistantLink.Delivery` hands it as `event.deliver` requests, numbered by its own counter, and
+    reports the agent's answers back.
   - An app connection sends its account's `link.status` changes, and `event.created` and `event.updated`
     with `{"event": event}` for its text messages.
 
@@ -15,6 +17,7 @@ defmodule AssistantLinkWeb.Connection do
   @behaviour WebSock
 
   alias AssistantLink.Accounts
+  alias AssistantLink.Delivery
   alias AssistantLink.Links
   alias AssistantLinkWeb.API.EventJSON
   alias AssistantLinkWeb.JSONRPC
@@ -25,7 +28,7 @@ defmodule AssistantLinkWeb.Connection do
   @spec upgrade(Plug.Conn.t(), {:agent, Links.Link.t()} | {:app, Ecto.UUID.t()}) :: Plug.Conn.t()
   def upgrade(conn, role) do
     config = Application.fetch_env!(:assistant_link, __MODULE__)
-    state = %{role: role, ping_interval: Keyword.fetch!(config, :ping_interval)}
+    state = %{role: role, ping_interval: Keyword.fetch!(config, :ping_interval), next_request_id: 1, request: nil}
 
     conn
     |> WebSockAdapter.upgrade(__MODULE__, state, timeout: Keyword.fetch!(config, :timeout))
@@ -37,6 +40,7 @@ defmodule AssistantLinkWeb.Connection do
     case Accounts.subscribe(link.account_id) do
       :ok ->
         :ok = Links.connect(link)
+        :ok = Delivery.connect(link)
 
         ready =
           JSONRPC.notification("connection.ready", %{
@@ -61,9 +65,17 @@ defmodule AssistantLinkWeb.Connection do
 
   @impl WebSock
   def handle_in({frame, opcode: :text}, state) do
-    case JSONRPC.reply(frame, &JSONRPC.no_methods/2) do
-      nil -> {:ok, state}
-      reply -> {:push, text(reply), state}
+    decoded = JSONRPC.decode(frame)
+
+    with {:ok, {:response, id, outcome}} <- decoded,
+         {:agent, link} <- state.role do
+      handle_response(link, id, outcome, state)
+    else
+      _not_an_agent_response ->
+        case JSONRPC.reply_to(decoded, &JSONRPC.no_methods/2) do
+          nil -> {:ok, state}
+          reply -> {:push, text(reply), state}
+        end
     end
   end
 
@@ -71,8 +83,27 @@ defmodule AssistantLinkWeb.Connection do
     {:push, text(JSONRPC.error_response(nil, JSONRPC.invalid_request("expected a text frame."))), state}
   end
 
+  # A result acknowledges an event whichever request it answers, however late. An error only fails
+  # the attempt that is waiting for it.
+  defp handle_response(link, _id, {:ok, %{"event_id" => event_id}}, state) do
+    Delivery.acknowledge(link.id, event_id)
+    {:ok, state}
+  end
+
+  defp handle_response(link, id, {:error, _error}, %{request: {id, attempt}} = state) do
+    Delivery.fail(link.id, attempt)
+    {:ok, state}
+  end
+
+  defp handle_response(_link, _id, _outcome, state), do: {:ok, state}
+
   @impl WebSock
   def handle_info(:ping, state), do: {:push, {:ping, ""}, schedule_ping(state)}
+
+  def handle_info({:event_deliver, attempt, event}, %{next_request_id: id} = state) do
+    request = JSONRPC.request(id, "event.deliver", EventJSON.delivery(event))
+    {:push, text(request), %{state | next_request_id: id + 1, request: {id, attempt}}}
+  end
 
   def handle_info({:link_status, link_status}, %{role: {:app, _account_id}} = state),
     do: {:push, text(JSONRPC.notification("link.status", link_status)), state}

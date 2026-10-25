@@ -8,11 +8,13 @@ defmodule AssistantLinkWeb.InstallMdTest do
     assert response_content_type(conn, :md) =~ "text/markdown"
   end
 
-  test "the instructions cover installing, pairing, checking, waiting, and when to stop", %{conn: conn} do
+  test "the instructions install, pair, store the key, check, and end with al help", %{conn: conn} do
     body = conn |> get("/install.md") |> response(200)
 
-    for expected <- ["## Objective", "## Done when", "al pair", "al status", "al wait", "## Stop conditions"] do
+    for expected <- ["## 1. Install `al`", "al pair", "al-hermes", "al-hermes status", "## If something fails"] do
       assert body =~ expected
     end
+
+    assert String.ends_with?(String.trim_trailing(body), "Run `al help` and follow it.")
   end
 end

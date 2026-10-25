@@ -3,6 +3,12 @@ defmodule AssistantLinkWeb.API.EventJSON do
 
   def show(%{event: event}), do: %{event: event(event)}
 
+  @doc "The event as the params of `event.deliver`."
+  def delivery(event) do
+    base = %{id: event.id, type: event.type, created_at: event.inserted_at, deleted: deleted?(event)}
+    Map.merge(base, payload(event))
+  end
+
   def event(event) do
     base = %{
       id: event.id,

@@ -1,7 +1,7 @@
 defmodule AssistantLink.Links.Link do
   @moduledoc """
   An Assistant Link: one agent installation connected to an Assistant. It is paired once, which gives
-  the agent its Link token.
+  the agent its Link token. `last_read_seq` is the `seq` of the last event it acknowledged.
   """
   use AssistantLink.Schema
 
@@ -15,6 +15,7 @@ defmodule AssistantLink.Links.Link do
     field :token_hash, :binary, redact: true
     field :paired_at, :utc_datetime_usec
     field :last_active_at, :utc_datetime_usec
+    field :last_read_seq, :integer, default: 0
 
     belongs_to :account, AssistantLink.Accounts.Account
     belongs_to :assistant, AssistantLink.Assistants.Assistant

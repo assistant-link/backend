@@ -78,6 +78,13 @@ defmodule AssistantLinkWeb.Router do
     get "/connect", ConnectionController, :agent
   end
 
+  scope "/alp/v1", AssistantLinkWeb.ALP do
+    pipe_through [:api, :require_link_token]
+
+    get "/link", LinkController, :show
+    post "/messages", MessageController, :create
+  end
+
   ## Authentication routes
   # If you want to use the LiveDashboard in production, you should put
   # it behind authentication and allow only admins to access it.

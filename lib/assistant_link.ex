@@ -8,5 +8,15 @@ defmodule AssistantLink do
   """
   use Boundary,
     deps: [],
-    exports: [Accounts, Accounts.Purger, Accounts.Scope, Accounts.User, Assistants, Events, Events.Event, Links]
+    exports: [
+      Accounts,
+      Accounts.Purger,
+      Accounts.Scope,
+      Accounts.User,
+      Assistants,
+      Delivery,
+      Events,
+      Events.Event,
+      Links
+    ]
 end
