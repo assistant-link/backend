@@ -19,12 +19,16 @@ defmodule AssistantLink.Events.TextMessage do
   @spec validate_text(term()) :: :ok | {:error, :text_empty | :text_too_long | :invalid_params}
   def validate_text(text) when is_binary(text) do
     cond do
-      String.trim(text) == "" -> {:error, :text_empty}
-      length(String.to_charlist(text)) > @max_length -> {:error, :text_too_long}
+      String.trim_leading(text) == "" -> {:error, :text_empty}
+      too_long?(text, @max_length) -> {:error, :text_too_long}
       String.contains?(text, <<0>>) -> {:error, :invalid_params}
       true -> :ok
     end
   end
 
   def validate_text(_text), do: {:error, :invalid_params}
+
+  defp too_long?(<<>>, _remaining), do: false
+  defp too_long?(_text, 0), do: true
+  defp too_long?(<<_::utf8, rest::binary>>, remaining), do: too_long?(rest, remaining - 1)
 end

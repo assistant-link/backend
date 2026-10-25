@@ -66,4 +66,10 @@ defmodule AssistantLink.EventsTest do
     assert {:error, :text_empty} = Events.create_text_message(scope, link.assistant_id, empty)
     refute_receive {:event_created, _event}
   end
+
+  test "create_text_message/3 rejects a raw 16-byte binary as the idempotency key", %{scope: scope, link: link} do
+    raw = Ecto.UUID.bingenerate()
+    params = %{"text" => "Hi", "idempotency_key" => raw}
+    assert {:error, :invalid_params} = Events.create_text_message(scope, link.assistant_id, params)
+  end
 end

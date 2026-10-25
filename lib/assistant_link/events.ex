@@ -20,7 +20,7 @@ defmodule AssistantLink.Events do
   @max_limit 100
 
   @doc "Stores the `link_created` event of a new Link. Call it in the transaction that creates the Link."
-  @spec create_link_created(Link.t()) :: {:ok, Event.t()}
+  @spec create_link_created(Link.t()) :: {:ok, Event.t()} | {:error, Ecto.Changeset.t()}
   def create_link_created(%Link{} = link) do
     insert_event(%Event{
       account_id: link.account_id,
@@ -109,7 +109,8 @@ defmodule AssistantLink.Events do
     end
   end
 
-  defp stored(account_id, key) do
+  # Ecto.UUID.cast/1 also takes a raw 16-byte binary; a key is only the 36-character text form.
+  defp stored(account_id, <<_::288>> = key) do
     case Ecto.UUID.cast(key) do
       {:ok, uuid} ->
         Repo.one(
@@ -122,6 +123,8 @@ defmodule AssistantLink.Events do
         nil
     end
   end
+
+  defp stored(_account_id, _key), do: nil
 
   # A deleted payload has no text to differ from.
   defp replay(%Event{assistant_id: assistant_id, text_message: stored_text} = event, %Assistant{id: assistant_id}, text)
@@ -144,7 +147,7 @@ defmodule AssistantLink.Events do
     end
   end
 
-  defp cast_uuid_v7(key) do
+  defp cast_uuid_v7(<<_::288>> = key) do
     with {:ok, uuid} <- Ecto.UUID.cast(key),
          {:ok, <<_::48, 7::4, _::12, 2::2, _::62>>} <- Ecto.UUID.dump(uuid) do
       {:ok, uuid}
@@ -152,6 +155,8 @@ defmodule AssistantLink.Events do
       _not_uuid_v7 -> {:error, :invalid_params}
     end
   end
+
+  defp cast_uuid_v7(_key), do: {:error, :invalid_params}
 
   defp insert_text_message(assistant, text, key) do
     event = %Event{

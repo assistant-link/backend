@@ -29,7 +29,7 @@ defmodule AssistantLinkWeb.API.FallbackController do
   end
 
   def call(conn, {:error, :text_too_long}) do
-    APIError.send_error(conn, 422, "text_too_long", "The text must have at most 4000 characters.")
+    APIError.send_error(conn, 422, "text_too_long", "The text must have at most 4000 Unicode code points.")
   end
 
   def call(conn, {:error, :invalid_params}) do
