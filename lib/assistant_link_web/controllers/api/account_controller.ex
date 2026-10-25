@@ -3,6 +3,8 @@ defmodule AssistantLinkWeb.API.AccountController do
 
   alias AssistantLink.Accounts
 
+  action_fallback AssistantLinkWeb.API.FallbackController
+
   def create(conn, _params) do
     {:ok, registration} = Accounts.register_device()
 
@@ -12,8 +14,8 @@ defmodule AssistantLinkWeb.API.AccountController do
   end
 
   def delete(conn, _params) do
-    :ok = Accounts.delete_account(conn.assigns.current_scope)
-
-    send_resp(conn, :no_content, "")
+    with :ok <- Accounts.delete_account(conn.assigns.current_scope) do
+      send_resp(conn, :no_content, "")
+    end
   end
 end

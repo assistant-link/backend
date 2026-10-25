@@ -5,7 +5,7 @@ defmodule AssistantLinkWeb.Plugs.BearerAuth do
       plug BearerAuth, :account   # client API: a device's account credential; assigns :current_scope
       plug BearerAuth, :link      # ALP: a Link token; assigns :current_link (with its Assistant)
 
-  A missing, malformed, or unknown token gets `401` with error code `unauthorized`.
+  A missing, malformed, or unknown token, or one of a deleted account, gets `401` with error code `unauthorized`.
   """
   @behaviour Plug
 

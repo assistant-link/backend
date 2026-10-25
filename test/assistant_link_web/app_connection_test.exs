@@ -25,6 +25,12 @@ defmodule AssistantLinkWeb.AppConnectionTest do
     end
   end
 
+  test "rejects the credential of a deleted account", %{port: port, credential: credential, scope: scope} do
+    :ok = Accounts.delete_account(scope)
+
+    assert {:error, {401, %{"error" => %{"code" => "unauthorized"}}}} = open(port, "/api/v1/connect", credential)
+  end
+
   test "sends link.status when an agent connects and disconnects", %{app: app, scope: scope, port: port} do
     {link, token} = paired_link_fixture(scope)
     link_id = link.id

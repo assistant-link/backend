@@ -2,6 +2,7 @@ defmodule AssistantLink.Links do
   @moduledoc false
   import Ecto.Query, warn: false
 
+  alias AssistantLink.Accounts.Account
   alias AssistantLink.Accounts.Scope
   alias AssistantLink.Assistants
   alias AssistantLink.Events
@@ -103,14 +104,21 @@ defmodule AssistantLink.Links do
   issues the Link's token. Returns the raw token, which is not retrievable later, and the Link with its
   Assistant.
 
-  Returns `{:error, :invalid_code}` for an unknown, replaced, or used code, and
+  Returns `{:error, :invalid_code}` for an unknown, replaced, or used code or one of a deleted account, and
   `{:error, :expired_code}` for an unused code past its expiry.
   """
   @spec pair(String.t()) :: {:ok, %{link: Link.t(), token: String.t()}} | {:error, :invalid_code | :expired_code}
   def pair(code) when is_binary(code) do
     code_hash = code |> Tokens.normalize_code() |> Tokens.hash()
 
-    case Repo.one(from c in PairingCode, where: c.code_hash == ^code_hash, select: c.link_id) do
+    lookup =
+      from c in PairingCode,
+        join: a in Account,
+        on: a.id == c.account_id,
+        where: c.code_hash == ^code_hash and is_nil(a.deleted_at),
+        select: c.link_id
+
+    case Repo.one(lookup) do
       nil -> {:error, :invalid_code}
       link_id -> Repo.transact(fn -> pair_locked_link(link_id, code_hash) end)
     end
@@ -172,14 +180,16 @@ defmodule AssistantLink.Links do
 
   @doc """
   Returns the paired Link for a Link token, with its Assistant preloaded, or `nil` if no Link has it.
-  A Link whose account was deleted no longer exists, so its token finds nothing.
+  A Link of a deleted account finds nothing.
   """
   @spec get_link_by_token(String.t()) :: Link.t() | nil
   def get_link_by_token(token) when is_binary(token) do
     Repo.one(
       from l in Link,
         join: a in assoc(l, :assistant),
-        where: l.token_hash == ^Tokens.hash(token),
+        join: acc in Account,
+        on: acc.id == l.account_id,
+        where: l.token_hash == ^Tokens.hash(token) and is_nil(acc.deleted_at),
         preload: [assistant: a]
     )
   end

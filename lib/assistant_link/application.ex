@@ -12,6 +12,7 @@ defmodule AssistantLink.Application do
       {DNSCluster, query: Application.get_env(:assistant_link, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: AssistantLink.PubSub},
       AssistantLink.Presence,
+      AssistantLink.Accounts.Purger,
       # Start a worker by calling: AssistantLink.Worker.start_link(arg)
       # {AssistantLink.Worker, arg},
       # Start to serve requests, typically the last entry

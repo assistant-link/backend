@@ -4,6 +4,7 @@ defmodule AssistantLinkWeb.Plugs.BearerAuthTest do
   import AssistantLink.AccountsFixtures
   import Ecto.Query
 
+  alias AssistantLink.Accounts.Account
   alias AssistantLink.Accounts.Device
   alias AssistantLink.Accounts.Membership
   alias AssistantLink.Assistants.Assistant
@@ -27,6 +28,10 @@ defmodule AssistantLinkWeb.Plugs.BearerAuthTest do
     conn
     |> then(&if(header, do: put_req_header(&1, "authorization", header), else: &1))
     |> BearerAuth.call(BearerAuth.init(kind))
+  end
+
+  defp soft_delete(account) do
+    Repo.update_all(from(a in Account, where: a.id == ^account.id), set: [deleted_at: DateTime.utc_now()])
   end
 
   defp assert_unauthorized(conn) do
@@ -68,16 +73,30 @@ defmodule AssistantLinkWeb.Plugs.BearerAuthTest do
       end
     end
 
-    test "a credential is rejected once its membership is removed", context do
-      Repo.delete_all(
-        from m in Membership, where: m.user_id == ^context.user.id and m.account_id == ^context.account.id
-      )
+    test "a membership cannot be removed while a device still depends on it", context do
+      assert_raise Postgrex.Error, ~r/devices_user_id_fkey/, fn ->
+        Repo.delete_all(
+          from m in Membership, where: m.user_id == ^context.user.id and m.account_id == ^context.account.id
+        )
+      end
+    end
+
+    test "a credential is rejected once its device is removed", context do
+      Repo.delete_all(from d in Device, where: d.id == ^context.device.id)
 
       context.conn |> authenticate(:account, "Bearer " <> context.device_token) |> assert_unauthorized()
     end
 
     test "a deleted user's credential is rejected", %{conn: conn, user: user, device_token: token} do
+      Repo.delete_all(from d in Device, where: d.user_id == ^user.id)
+      Repo.delete_all(from m in Membership, where: m.user_id == ^user.id)
       Repo.delete!(user)
+
+      conn |> authenticate(:account, "Bearer " <> token) |> assert_unauthorized()
+    end
+
+    test "the credential of a deleted account is rejected", %{conn: conn, account: account, device_token: token} do
+      soft_delete(account)
 
       conn |> authenticate(:account, "Bearer " <> token) |> assert_unauthorized()
     end
@@ -101,7 +120,7 @@ defmodule AssistantLinkWeb.Plugs.BearerAuthTest do
     end
 
     test "the token of a Link whose account was deleted is rejected", %{conn: conn, account: account, link_token: token} do
-      Repo.delete!(account)
+      soft_delete(account)
 
       conn |> authenticate(:link, "Bearer " <> token) |> assert_unauthorized()
     end

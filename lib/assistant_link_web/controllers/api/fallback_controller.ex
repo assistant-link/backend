@@ -8,6 +8,10 @@ defmodule AssistantLinkWeb.API.FallbackController do
     APIError.send_error(conn, 422, "invalid_params", error_message(changeset))
   end
 
+  def call(conn, {:error, :unauthorized}) do
+    APIError.send_error(conn, 401, "unauthorized", "Missing or invalid bearer token.")
+  end
+
   def call(conn, {:error, :not_found}) do
     APIError.send_error(conn, 404, "not_found", "Not found.")
   end

@@ -7,6 +7,8 @@ defmodule AssistantLink.Accounts.Account do
   @type t :: %__MODULE__{}
 
   schema "accounts" do
+    field :deleted_at, :utc_datetime_usec
+
     has_many :memberships, AssistantLink.Accounts.Membership
     has_many :assistants, AssistantLink.Assistants.Assistant
 
