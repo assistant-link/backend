@@ -14,6 +14,17 @@ defmodule AssistantLink.Accounts.PurgerTest do
     scope.account
   end
 
+  test "runs the first purge shortly after it starts" do
+    expired = deleted_account(61)
+    pid = start_supervised!({Purger, first_delay: 100})
+    :erlang.trace(pid, true, [:receive])
+
+    assert_receive {:trace, ^pid, :receive, :purge}, 5_000
+    _ = :sys.get_state(pid)
+
+    refute Repo.get(Account, expired.id)
+  end
+
   test "purges the accounts past the grace period when it runs" do
     expired = deleted_account(61)
     recent = deleted_account(1)

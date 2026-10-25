@@ -181,9 +181,18 @@ defmodule AssistantLink.Accounts do
   - `{:event_created, event}` for each stored text message, and `{:event_updated, event}` when a user
     message is first delivered (see `AssistantLink.Events`)
   - `:account_deleted` after the account was deleted
+
+  Returns `{:error, :account_deleted}` for an account already deleted, whose subscribers get no
+  `:account_deleted`.
   """
-  @spec subscribe(Ecto.UUID.t()) :: :ok
-  def subscribe(account_id), do: Phoenix.PubSub.subscribe(AssistantLink.PubSub, topic(account_id))
+  @spec subscribe(Ecto.UUID.t()) :: :ok | {:error, :account_deleted}
+  def subscribe(account_id) do
+    :ok = Phoenix.PubSub.subscribe(AssistantLink.PubSub, topic(account_id))
+
+    if Repo.exists?(from a in Account, where: a.id == ^account_id and is_nil(a.deleted_at)),
+      do: :ok,
+      else: {:error, :account_deleted}
+  end
 
   @doc false
   @spec topic(Ecto.UUID.t()) :: String.t()

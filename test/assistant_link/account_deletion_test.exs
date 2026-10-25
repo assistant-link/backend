@@ -105,6 +105,32 @@ defmodule AssistantLink.AccountDeletionTest do
       assert Links.pair(code) == {:error, :invalid_code}
     end
 
+    test "rejects a pairing code when the account is deleted after the code was found", context do
+      %{code: code} = populate(context.scope)
+      scope = context.scope
+      test = self()
+
+      # Deletes the account right after pair/1's first lookup, before it locks the Link.
+      :telemetry.attach(
+        "delete-after-lookup",
+        [:assistant_link, :repo, :query],
+        fn _event, _measurements, %{query: query}, _config ->
+          if self() == test and query =~ "pairing_codes" and Process.get(:deleted) == nil do
+            Process.put(:deleted, true)
+            send(test, :lookup_done)
+            :ok = Accounts.delete_account(scope)
+          end
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach("delete-after-lookup") end)
+
+      assert Links.pair(code) == {:error, :invalid_code}
+      assert_received :lookup_done
+      assert Repo.exists?(from c in PairingCode, where: is_nil(c.used_at))
+    end
+
     test "stops the web sessions and magic links of users whose only account it is", context do
       :ok = Accounts.delete_account(context.scope)
 

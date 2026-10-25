@@ -4,6 +4,9 @@ defmodule AssistantLink.Application do
   use Boundary, top_level?: true, deps: [AssistantLink, AssistantLinkWeb]
   use Application
 
+  # Tests start their own Purger: a timed purge in the background would use a test's sandbox connection.
+  @purgers if Mix.env() == :test, do: [], else: [AssistantLink.Accounts.Purger]
+
   @impl true
   def start(_type, _args) do
     children = [
@@ -11,13 +14,18 @@ defmodule AssistantLink.Application do
       AssistantLink.Repo,
       {DNSCluster, query: Application.get_env(:assistant_link, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: AssistantLink.PubSub},
-      AssistantLink.Presence,
-      AssistantLink.Accounts.Purger,
-      # Start a worker by calling: AssistantLink.Worker.start_link(arg)
-      # {AssistantLink.Worker, arg},
-      # Start to serve requests, typically the last entry
-      AssistantLinkWeb.Endpoint
+      AssistantLink.Presence
     ]
+
+    children =
+      children ++
+        @purgers ++
+        [
+          # Start a worker by calling: AssistantLink.Worker.start_link(arg)
+          # {AssistantLink.Worker, arg},
+          # Start to serve requests, typically the last entry
+          AssistantLinkWeb.Endpoint
+        ]
 
     opts = [strategy: :one_for_one, name: AssistantLink.Supervisor]
     Supervisor.start_link(children, opts)

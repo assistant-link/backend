@@ -125,10 +125,18 @@ defmodule AssistantLink.Links do
   end
 
   # Locks the Link before reading its code again, in the same order as issue_for_locked_link/2, so a
-  # code replaced or used meanwhile is seen as such.
+  # code replaced or used meanwhile is seen as such. The account is checked again, as it may have been
+  # deleted since the lookup.
   defp pair_locked_link(link_id, code_hash) do
     now = DateTime.utc_now()
-    locked_link = from l in Link, where: l.id == ^link_id, lock: "FOR UPDATE", preload: :assistant
+
+    locked_link =
+      from l in Link,
+        join: a in Account,
+        on: a.id == l.account_id,
+        where: l.id == ^link_id and is_nil(a.deleted_at),
+        lock: "FOR UPDATE",
+        preload: :assistant
 
     with %Link{} = link <- Repo.one(locked_link),
          %PairingCode{used_at: nil} = code <- Repo.get_by(PairingCode, code_hash: code_hash, link_id: link_id) do
