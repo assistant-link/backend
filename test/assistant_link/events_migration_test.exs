@@ -15,7 +15,11 @@ defmodule AssistantLink.EventsMigrationTest do
   @migration Application.app_dir(:assistant_link, "priv/repo/migrations/20261025122706_create_assistant_events.exs")
 
   setup_all do
-    [{module, _binary}] = Code.require_file(@migration)
+    # `mix test` already migrated in this VM, which loaded the module.
+    ignore = Code.get_compiler_option(:ignore_module_conflict)
+    Code.put_compiler_option(:ignore_module_conflict, true)
+    [{module, _binary}] = Code.compile_file(@migration)
+    Code.put_compiler_option(:ignore_module_conflict, ignore)
     %{migration: module}
   end
 
