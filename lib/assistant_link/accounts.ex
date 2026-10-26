@@ -13,6 +13,8 @@ defmodule AssistantLink.Accounts do
   alias AssistantLink.Accounts.User
   alias AssistantLink.Accounts.UserNotifier
   alias AssistantLink.Accounts.UserToken
+  alias AssistantLink.Events.Event
+  alias AssistantLink.Events.TextMessage
   alias AssistantLink.Repo
   alias AssistantLink.Tokens
 
@@ -172,6 +174,8 @@ defmodule AssistantLink.Accounts do
 
   - `{:link_status, %{link_id: id, status: :online | :offline, last_active_at: DateTime.t()}}` when a
     Link comes online or goes offline
+  - `{:event_created, event}` for each stored text message, and `{:event_updated, event}` when a user
+    message is first delivered (see `AssistantLink.Events`)
   - `:account_deleted` after the account was deleted
   """
   @spec subscribe(Ecto.UUID.t()) :: :ok
@@ -201,6 +205,9 @@ defmodule AssistantLink.Accounts do
               select: m.user_id
           )
 
+        # No foreign key to events cascades, so they go first.
+        Repo.delete_all(from t in TextMessage, where: t.account_id == ^account_id)
+        Repo.delete_all(from e in Event, where: e.account_id == ^account_id)
         Repo.delete_all(from a in Account, where: a.id == ^account_id)
         Repo.delete_all(from u in User, where: u.id in ^sole_member_ids)
         {:ok, :ok}

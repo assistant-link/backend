@@ -1,6 +1,8 @@
 defmodule AssistantLinkWeb.API.AssistantControllerTest do
   use AssistantLinkWeb.ConnCase, async: true
 
+  import AssistantLink.LinksFixtures
+
   alias AssistantLink.Assistants
   alias AssistantLink.Links
   alias AssistantLink.Links.Link
@@ -87,6 +89,29 @@ defmodule AssistantLinkWeb.API.AssistantControllerTest do
 
       assert [%{"name" => "Hermes"}, %{"name" => "Muse"}] =
                conn |> get(~p"/api/v1/assistants") |> json_response(200) |> Map.fetch!("assistants")
+    end
+
+    test "carries each Assistant's latest event of any type, null with no events", %{conn: conn, scope: scope} do
+      {:ok, _empty} = Assistants.create_assistant(scope, %{"name" => "Empty", "avatar" => "avatar-1"})
+      {:ok, only_link} = Assistants.create_assistant(scope, %{"name" => "Only", "avatar" => "avatar-2"})
+      {:ok, _link} = Links.create_link(scope, only_link.id, %{})
+      {link, _token} = paired_link_fixture(scope, "Talking")
+
+      post(conn, ~p"/api/v1/assistants/#{link.assistant_id}/messages", %{
+        "text" => "Hi",
+        "idempotency_key" => Ecto.UUID.generate(version: 7)
+      })
+
+      latest =
+        conn
+        |> get(~p"/api/v1/assistants")
+        |> json_response(200)
+        |> Map.fetch!("assistants")
+        |> Map.new(&{&1["name"], &1["latest_event"]})
+
+      assert latest["Empty"] == nil
+      assert %{"type" => "link_created", "deleted" => false} = latest["Only"]
+      assert %{"type" => "text_message", "sender" => "user", "text_message" => %{"text" => "Hi"}} = latest["Talking"]
     end
 
     test "does not list another account's Assistants", %{conn: conn} do

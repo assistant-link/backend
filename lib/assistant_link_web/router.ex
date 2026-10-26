@@ -55,6 +55,8 @@ defmodule AssistantLinkWeb.Router do
     get "/assistants", AssistantController, :index
     post "/assistants", AssistantController, :create
     post "/assistants/:assistant_id/links", LinkController, :create
+    get "/assistants/:assistant_id/events", EventController, :index
+    post "/assistants/:assistant_id/messages", MessageController, :create
     post "/links/:link_id/pairing_code", PairingCodeController, :create
   end
 

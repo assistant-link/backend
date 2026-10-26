@@ -11,9 +11,6 @@ defmodule AssistantLink.MixProject do
       aliases: aliases(),
       deps: deps(),
       compilers: [:boundary, :phoenix_live_view] ++ Mix.compilers(),
-      # Bandit has no release fixing it yet; HTTP/2 is disabled in config/config.exs meanwhile.
-      # Remove both once a fixed Bandit is in mix.lock.
-      hex: [ignore_advisories: ["EEF-CVE-2026-105659"]],
       listeners: [Phoenix.CodeReloader]
     ]
   end
