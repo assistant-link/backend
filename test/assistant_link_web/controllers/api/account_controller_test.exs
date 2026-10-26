@@ -1,6 +1,7 @@
 defmodule AssistantLinkWeb.API.AccountControllerTest do
   use AssistantLinkWeb.ConnCase, async: true
 
+  import AssistantLink.LinksFixtures
   import Ecto.Query
 
   alias AssistantLink.Accounts.Account
@@ -9,6 +10,7 @@ defmodule AssistantLinkWeb.API.AccountControllerTest do
   alias AssistantLink.Accounts.User
   alias AssistantLink.Assistants
   alias AssistantLink.Assistants.Assistant
+  alias AssistantLink.Events.TextMessage
   alias AssistantLink.Links
   alias AssistantLink.Links.Link
   alias AssistantLink.Links.PairingCode
@@ -57,7 +59,7 @@ defmodule AssistantLinkWeb.API.AccountControllerTest do
   describe "DELETE /api/v1/account" do
     setup :register_device
 
-    test "deletes the account, everything it owns, and its users", %{conn: conn, scope: scope} do
+    test "marks the account deleted and keeps its data", %{conn: conn, scope: scope} do
       {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
       {:ok, link} = Links.create_link(scope, assistant.id, %{})
       {:ok, _pairing} = Links.issue_pairing_code(scope, link.id)
@@ -68,16 +70,15 @@ defmodule AssistantLinkWeb.API.AccountControllerTest do
       conn = delete(conn, ~p"/api/v1/account")
 
       assert response(conn, 204) == ""
-      refute Repo.get(Account, scope.account.id)
-      refute Repo.get(User, scope.user.id)
+      assert %DateTime{} = Repo.get!(Account, scope.account.id).deleted_at
+      assert Repo.get!(Account, other.account.id).deleted_at == nil
 
       for schema <- [User, Device, Membership, Account, Assistant] do
-        assert Repo.aggregate(schema, :count) == 1, "expected only the other account's #{inspect(schema)}"
+        assert Repo.aggregate(schema, :count) == 2, "expected both accounts' #{inspect(schema)}"
       end
 
-      assert Repo.aggregate(Link, :count) == 0
-      assert Repo.aggregate(PairingCode, :count) == 0
-      assert Repo.get(Account, other.account.id)
+      assert Repo.aggregate(Link, :count) == 1
+      assert Repo.aggregate(PairingCode, :count) == 1
     end
 
     test "the deleted account's credential no longer works", %{conn: conn, credential: credential} do
@@ -86,6 +87,43 @@ defmodule AssistantLinkWeb.API.AccountControllerTest do
       conn = build_conn() |> authenticate_device(credential) |> get(~p"/api/v1/assistants")
 
       assert json_response(conn, 401)["error"]["code"] == "unauthorized"
+    end
+
+    test "logging out a deleted account is unauthorized and keeps deleted_at", %{
+      conn: conn,
+      credential: credential,
+      account: account
+    } do
+      assert response(delete(conn, ~p"/api/v1/account"), 204)
+      deleted_at = Repo.get!(Account, account.id).deleted_at
+
+      conn = build_conn() |> authenticate_device(credential) |> delete(~p"/api/v1/account")
+
+      assert json_response(conn, 401)["error"]["code"] == "unauthorized"
+      assert Repo.get!(Account, account.id).deleted_at == deleted_at
+    end
+
+    test "nothing of the deleted account is readable or postable", %{conn: conn, scope: scope, credential: credential} do
+      {link, _token} = paired_link_fixture(scope)
+      delete(conn, ~p"/api/v1/account")
+      conn = authenticate_device(build_conn(), credential)
+      assistant_id = link.assistant_id
+
+      requests = [
+        get(conn, ~p"/api/v1/assistants"),
+        post(conn, ~p"/api/v1/assistants", %{"name" => "Muse", "avatar" => "avatar-2"}),
+        post(conn, ~p"/api/v1/assistants/#{assistant_id}/links", %{}),
+        post(conn, ~p"/api/v1/links/#{link.id}/pairing_code"),
+        get(conn, ~p"/api/v1/assistants/#{assistant_id}/events"),
+        post(conn, ~p"/api/v1/assistants/#{assistant_id}/messages", %{
+          "text" => "Hi",
+          "idempotency_key" => Ecto.UUID.generate(version: 7)
+        }),
+        get(conn, ~p"/api/v1/connect")
+      ]
+
+      for response <- requests, do: assert(json_response(response, 401)["error"]["code"] == "unauthorized")
+      assert Repo.aggregate(TextMessage, :count) == 0
     end
 
     test "requires an account credential" do

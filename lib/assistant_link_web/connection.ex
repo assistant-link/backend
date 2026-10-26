@@ -34,22 +34,29 @@ defmodule AssistantLinkWeb.Connection do
 
   @impl WebSock
   def init(%{role: {:agent, link}} = state) do
-    :ok = Accounts.subscribe(link.account_id)
-    :ok = Links.connect(link)
+    case Accounts.subscribe(link.account_id) do
+      :ok ->
+        :ok = Links.connect(link)
 
-    ready =
-      JSONRPC.notification("connection.ready", %{
-        link_id: link.id,
-        assistant_name: link.assistant.name,
-        protocol_version: @protocol_version
-      })
+        ready =
+          JSONRPC.notification("connection.ready", %{
+            link_id: link.id,
+            assistant_name: link.assistant.name,
+            protocol_version: @protocol_version
+          })
 
-    {:push, text(ready), schedule_ping(state)}
+        {:push, text(ready), schedule_ping(state)}
+
+      {:error, :account_deleted} ->
+        close_account_deleted(Map.put(state, :closed_before_connect, true))
+    end
   end
 
   def init(%{role: {:app, account_id}} = state) do
-    :ok = Accounts.subscribe(account_id)
-    {:ok, schedule_ping(state)}
+    case Accounts.subscribe(account_id) do
+      :ok -> {:ok, schedule_ping(state)}
+      {:error, :account_deleted} -> close_account_deleted(state)
+    end
   end
 
   @impl WebSock
@@ -78,14 +85,17 @@ defmodule AssistantLinkWeb.Connection do
 
   def handle_info({notice, _event}, state) when notice in [:event_created, :event_updated], do: {:ok, state}
 
-  def handle_info(:account_deleted, state) do
+  def handle_info(:account_deleted, state), do: close_account_deleted(state)
+
+  @impl WebSock
+  def terminate(_reason, %{closed_before_connect: true}), do: :ok
+  def terminate(_reason, %{role: {:agent, link}}), do: Links.disconnect(link)
+  def terminate(_reason, _state), do: :ok
+
+  defp close_account_deleted(state) do
     closing = JSONRPC.notification("connection.closing", %{reason: "account_deleted"})
     {:stop, :normal, {1000, "account_deleted"}, [text(closing)], state}
   end
-
-  @impl WebSock
-  def terminate(_reason, %{role: {:agent, link}}), do: Links.disconnect(link)
-  def terminate(_reason, _state), do: :ok
 
   defp event_method(:event_created), do: "event.created"
   defp event_method(:event_updated), do: "event.updated"

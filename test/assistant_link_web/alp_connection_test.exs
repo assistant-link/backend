@@ -220,6 +220,17 @@ defmodule AssistantLinkWeb.ALPConnectionTest do
       assert {:error, {401, _body}} = open(context.port, "/alp/v1/connect", context.token)
     end
 
+    test "closes a connection opened for an account deleted after authentication", %{scope: scope, link: link} do
+      :ok = Accounts.delete_account(scope)
+      state = %{role: {:agent, link}, ping_interval: 1_000}
+
+      assert {:stop, :normal, {1000, "account_deleted"}, [{:text, closing}], closed} =
+               AssistantLinkWeb.Connection.init(state)
+
+      assert %{"method" => "connection.closing", "params" => %{"reason" => "account_deleted"}} = Jason.decode!(closing)
+      assert :ok = AssistantLinkWeb.Connection.terminate(:normal, closed)
+    end
+
     test "leaves other accounts' agents connected", %{scope: scope} = context do
       other = register_device(%{conn: build_conn()})
       {other_link, other_token} = paired_link_fixture(other.scope)

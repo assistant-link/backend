@@ -13,15 +13,19 @@ defmodule AssistantLink.Accounts do
   alias AssistantLink.Accounts.User
   alias AssistantLink.Accounts.UserNotifier
   alias AssistantLink.Accounts.UserToken
+  alias AssistantLink.Assistants.Assistant
   alias AssistantLink.Events.Event
   alias AssistantLink.Events.TextMessage
+  alias AssistantLink.Links.Link
+  alias AssistantLink.Links.PairingCode
   alias AssistantLink.Repo
   alias AssistantLink.Tokens
 
   @doc """
   Returns the scope for a device's account credential: the user and account the device acts as. A
   device exists only while that user's membership in the account does. Returns `nil` if no device has
-  the credential. Records that the device was seen, at most once a minute.
+  the credential, or if its account was deleted. Records that the device was seen, at most once a
+  minute.
   """
   @spec get_scope_by_device_token(String.t()) :: Scope.t() | nil
   def get_scope_by_device_token(token) when is_binary(token) do
@@ -29,7 +33,7 @@ defmodule AssistantLink.Accounts do
       from d in Device,
         join: u in assoc(d, :user),
         join: a in assoc(d, :account),
-        where: d.token_hash == ^Tokens.hash(token),
+        where: d.token_hash == ^Tokens.hash(token) and is_nil(a.deleted_at),
         select: {d, u, a}
 
     case Repo.one(query) do
@@ -54,8 +58,8 @@ defmodule AssistantLink.Accounts do
 
   @doc """
   Returns the scope for a signed-in user: the user acting in the account of their membership.
-  Returns `nil` for `nil` or for a user without a membership. Raises if the user has more than one,
-  since web sessions have no way to choose an account.
+  Returns `nil` for `nil` or for a user without a membership in an account that is not deleted. Raises
+  if the user has more than one, since web sessions have no way to choose an account.
   """
   @spec scope_for_user(User.t() | nil) :: Scope.t() | nil
   def scope_for_user(nil), do: nil
@@ -65,7 +69,7 @@ defmodule AssistantLink.Accounts do
       from a in Account,
         join: m in Membership,
         on: m.account_id == a.id,
-        where: m.user_id == ^user_id
+        where: m.user_id == ^user_id and is_nil(a.deleted_at)
 
     case Repo.one(query) do
       %Account{} = account -> %Scope{user: user, account: account}
@@ -177,43 +181,115 @@ defmodule AssistantLink.Accounts do
   - `{:event_created, event}` for each stored text message, and `{:event_updated, event}` when a user
     message is first delivered (see `AssistantLink.Events`)
   - `:account_deleted` after the account was deleted
+
+  Returns `{:error, :account_deleted}` for an account already deleted, whose subscribers get no
+  `:account_deleted`.
   """
-  @spec subscribe(Ecto.UUID.t()) :: :ok
-  def subscribe(account_id), do: Phoenix.PubSub.subscribe(AssistantLink.PubSub, topic(account_id))
+  @spec subscribe(Ecto.UUID.t()) :: :ok | {:error, :account_deleted}
+  def subscribe(account_id) do
+    :ok = Phoenix.PubSub.subscribe(AssistantLink.PubSub, topic(account_id))
+
+    if Repo.exists?(from a in Account, where: a.id == ^account_id and is_nil(a.deleted_at)),
+      do: :ok,
+      else: {:error, :account_deleted}
+  end
 
   @doc false
   @spec topic(Ecto.UUID.t()) :: String.t()
   def topic(account_id), do: "account:" <> account_id
 
   @doc """
-  Deletes the scope's account with everything it owns, and every user whose only membership was in
-  it, with their devices and user tokens. Their account credentials stop working, and subscribers to
-  the account get `:account_deleted`.
+  Soft deletes the scope's account: records `deleted_at`, keeps the data, and sends
+  `:account_deleted` to the account's subscribers. From then on the account's credentials, Link
+  tokens, and pairing codes stop working, as do the web sessions and magic links of users whose only
+  account it is. `purge_deleted_accounts/0` removes the data later.
+
+  Returns `{:error, :unauthorized}` for an account that is already deleted, leaving `deleted_at` as is.
   """
-  @spec delete_account(Scope.t()) :: :ok
+  @spec delete_account(Scope.t()) :: :ok | {:error, :unauthorized}
   def delete_account(%Scope{account: %Account{id: account_id}}) do
-    {:ok, :ok} =
+    sole_member_ids =
+      from m in Membership,
+        join: n in Membership,
+        on: n.user_id == m.user_id,
+        where: m.account_id == ^account_id,
+        group_by: m.user_id,
+        having: count(n.id) == 1,
+        select: m.user_id
+
+    deleted = from a in Account, where: a.id == ^account_id and is_nil(a.deleted_at)
+
+    result =
       Repo.transact(fn ->
-        member_ids = from m in Membership, where: m.account_id == ^account_id, select: m.user_id
+        case Repo.update_all(deleted, set: [deleted_at: DateTime.utc_now()]) do
+          {1, _} ->
+            Repo.delete_all(
+              from t in UserToken,
+                where: t.user_id in subquery(sole_member_ids) and t.context in ["session", "login"]
+            )
 
-        sole_member_ids =
-          Repo.all(
-            from m in Membership,
-              where: m.user_id in subquery(member_ids),
-              group_by: m.user_id,
-              having: count(m.id) == 1,
-              select: m.user_id
-          )
+            {:ok, :ok}
 
-        # No foreign key to events cascades, so they go first.
-        Repo.delete_all(from t in TextMessage, where: t.account_id == ^account_id)
-        Repo.delete_all(from e in Event, where: e.account_id == ^account_id)
-        Repo.delete_all(from a in Account, where: a.id == ^account_id)
-        Repo.delete_all(from u in User, where: u.id in ^sole_member_ids)
-        {:ok, :ok}
+          {0, _} ->
+            {:error, :unauthorized}
+        end
       end)
 
-    Phoenix.PubSub.broadcast(AssistantLink.PubSub, topic(account_id), :account_deleted)
+    with {:ok, :ok} <- result do
+      Phoenix.PubSub.broadcast(AssistantLink.PubSub, topic(account_id), :account_deleted)
+    end
+  end
+
+  @doc """
+  Permanently deletes every account whose `deleted_at` is older than the `:deletion_grace_period`
+  setting, with everything it owns and the users left with no membership. Rows are deleted explicitly,
+  children first, one transaction per account. Other accounts are not touched.
+  """
+  @spec purge_deleted_accounts() :: :ok
+  def purge_deleted_accounts do
+    config = Application.fetch_env!(:assistant_link, __MODULE__)
+    cutoff = DateTime.shift(DateTime.utc_now(), second: -Keyword.fetch!(config, :deletion_grace_period))
+
+    ids = Repo.all(from a in Account, where: a.deleted_at < ^cutoff, select: a.id)
+    Enum.each(ids, &purge_account(&1, cutoff))
+  end
+
+  @purged_children [TextMessage, Event, PairingCode, Link, Assistant, Device, Membership]
+
+  defp purge_account(account_id, cutoff) do
+    Repo.transact(fn ->
+      claim =
+        from a in Account,
+          where: a.id == ^account_id and a.deleted_at < ^cutoff,
+          lock: "FOR UPDATE SKIP LOCKED"
+
+      if Repo.exists?(claim), do: delete_account_data(account_id)
+      {:ok, :ok}
+    end)
+  end
+
+  defp delete_account_data(account_id) do
+    member_ids = Repo.all(from m in Membership, where: m.account_id == ^account_id, select: m.user_id)
+
+    for schema <- @purged_children do
+      Repo.delete_all(from r in schema, where: r.account_id == ^account_id)
+    end
+
+    Repo.delete_all(from a in Account, where: a.id == ^account_id)
+    delete_users_without_membership(member_ids)
+  end
+
+  defp delete_users_without_membership(user_ids) do
+    orphans =
+      from u in User,
+        left_join: m in Membership,
+        on: m.user_id == u.id,
+        where: u.id in ^user_ids and is_nil(m.id),
+        select: u.id
+
+    orphan_ids = Repo.all(orphans)
+    Repo.delete_all(from t in UserToken, where: t.user_id in ^orphan_ids)
+    Repo.delete_all(from u in User, where: u.id in ^orphan_ids)
   end
 
   @doc """

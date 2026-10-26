@@ -5,11 +5,9 @@ defmodule AssistantLink.TenancyTest do
 
   alias AssistantLink.Accounts
   alias AssistantLink.Accounts.Account
-  alias AssistantLink.Accounts.Device
   alias AssistantLink.Accounts.Membership
   alias AssistantLink.Accounts.Scope
   alias AssistantLink.Accounts.User
-  alias AssistantLink.Accounts.UserToken
   alias AssistantLink.Assistants.Assistant
   alias AssistantLink.Links.Link
   alias AssistantLink.Links.PairingCode
@@ -37,12 +35,6 @@ defmodule AssistantLink.TenancyTest do
     assistant_with_link(account)
 
     {user, account}
-  end
-
-  defp counts do
-    for schema <- [User, UserToken, Device, Membership, Account, Assistant, Link, PairingCode], into: %{} do
-      {schema, Repo.aggregate(schema, :count)}
-    end
   end
 
   test "registering a user creates an account they own" do
@@ -122,54 +114,38 @@ defmodule AssistantLink.TenancyTest do
     end
   end
 
-  describe "cascades" do
-    test "deleting an account deletes its memberships, devices, Assistants, Links, and pairing codes" do
+  describe "no cascades" do
+    test "no foreign key has an ON DELETE action" do
+      assert Repo.query!("SELECT conname FROM pg_constraint WHERE contype = 'f' AND confdeltype <> 'a'").rows == []
+    end
+
+    test "an account with memberships cannot be deleted" do
       {_user, account} = user_with_data()
-      {other_user, _other_account} = user_with_data()
 
-      Repo.delete!(account)
-
-      assert counts() == %{
-               User => 2,
-               UserToken => 2,
-               Device => 1,
-               Membership => 1,
-               Account => 1,
-               Assistant => 1,
-               Link => 1,
-               PairingCode => 1
-             }
-
-      assert Repo.get(User, other_user.id)
+      assert_raise Ecto.ConstraintError, fn -> Repo.delete!(account) end
     end
 
-    test "deleting a user deletes their memberships, devices, and user tokens" do
-      {user, account} = user_with_data()
-      user_with_data()
+    test "a user with memberships cannot be deleted" do
+      {user, _account} = user_with_data()
 
-      Repo.delete!(account)
-      Repo.delete!(user)
-
-      assert counts() == %{
-               User => 1,
-               UserToken => 1,
-               Device => 1,
-               Membership => 1,
-               Account => 1,
-               Assistant => 1,
-               Link => 1,
-               PairingCode => 1
-             }
+      assert_raise Ecto.ConstraintError, fn -> Repo.delete!(user) end
     end
 
-    test "deleting a membership deletes the devices acting through it" do
+    test "a membership with devices acting through it cannot be deleted" do
       {user, account} = user_with_data()
       Repo.insert!(%Membership{account_id: account.id, user_id: user_fixture().id, role: :owner})
 
-      Repo.delete_all(from m in Membership, where: m.user_id == ^user.id and m.account_id == ^account.id)
+      assert_raise Postgrex.Error, ~r/foreign key/, fn ->
+        Repo.delete_all(from m in Membership, where: m.user_id == ^user.id and m.account_id == ^account.id)
+      end
+    end
 
-      assert Repo.aggregate(from(d in Device, where: d.user_id == ^user.id), :count) == 0
-      assert Repo.get(User, user.id)
+    test "a user with user tokens cannot be deleted" do
+      user = user_fixture()
+      Accounts.generate_user_session_token(user)
+      Repo.delete_all(from m in Membership, where: m.user_id == ^user.id)
+
+      assert_raise Ecto.ConstraintError, fn -> Repo.delete!(user) end
     end
   end
 
@@ -189,16 +165,18 @@ defmodule AssistantLink.TenancyTest do
       assert %Postgrex.Result{} = check_now!()
     end
 
-    test "an account's only owner cannot be deleted while the account exists" do
+    test "an account's only owner cannot leave while the account exists" do
       user = user_fixture()
-      Repo.delete!(user)
+      Repo.delete_all(from m in Membership, where: m.user_id == ^user.id)
 
       assert_raise Postgrex.Error, ~r/has no owner/, &check_now!/0
     end
 
-    test "deleting the account first lets its only owner be deleted" do
+    test "deleting the account lets its only owner leave" do
       user = user_fixture()
-      Repo.delete!(owned_account(user))
+      account = owned_account(user)
+      Repo.delete_all(from m in Membership, where: m.user_id == ^user.id)
+      Repo.delete!(account)
       Repo.delete!(user)
 
       assert %Postgrex.Result{} = check_now!()

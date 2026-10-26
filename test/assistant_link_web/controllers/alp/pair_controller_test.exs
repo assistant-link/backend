@@ -3,6 +3,7 @@ defmodule AssistantLinkWeb.ALP.PairControllerTest do
 
   import Ecto.Query
 
+  alias AssistantLink.Accounts
   alias AssistantLink.Assistants
   alias AssistantLink.Links
   alias AssistantLink.Links.Link
@@ -54,6 +55,14 @@ defmodule AssistantLinkWeb.ALP.PairControllerTest do
     for code <- ["0000-0000", ""] do
       assert code |> pair() |> error_code(422) == "invalid_code"
     end
+  end
+
+  test "a code of a deleted account is invalid, like an unknown code", %{scope: scope, code: code} do
+    :ok = Accounts.delete_account(scope)
+
+    assert code |> pair() |> error_code(422) == "invalid_code"
+    assert Repo.one!(PairingCode).used_at == nil
+    assert Repo.one!(Link).paired_at == nil
   end
 
   test "a replaced code is invalid", %{scope: scope, link: link, code: code} do

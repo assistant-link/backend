@@ -3,6 +3,9 @@
 
 import Config
 
+# Seconds a deleted account is kept before the purge removes it: 60 days.
+config :assistant_link, AssistantLink.Accounts, deletion_grace_period: 60 * 24 * 60 * 60
+
 # The mailer uses the "Local" adapter by default, which stores the emails
 # locally. You can see the emails in your browser, at "/dev/mailbox".
 #
