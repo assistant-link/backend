@@ -14,7 +14,9 @@ defmodule AssistantLink.Application do
       AssistantLink.Repo,
       {DNSCluster, query: Application.get_env(:assistant_link, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: AssistantLink.PubSub},
-      AssistantLink.Presence
+      AssistantLink.Presence,
+      {Registry, keys: :unique, name: AssistantLink.Delivery.Registry},
+      {DynamicSupervisor, name: AssistantLink.Delivery.Supervisor, strategy: :one_for_one}
     ]
 
     children =

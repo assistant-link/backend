@@ -72,13 +72,13 @@ defmodule AssistantLinkWeb.JSONRPC do
   response to send. Returns `nil` for notifications and responses, which get no answer.
   """
   @spec reply(binary(), route()) :: map() | nil
-  def reply(frame, route) do
-    case decode(frame) do
-      {:ok, {:request, id, method, params}} -> answer(id, route.(method, params))
-      {:ok, _notification_or_response} -> nil
-      {:error, response} -> response
-    end
-  end
+  def reply(frame, route), do: frame |> decode() |> reply_to(route)
+
+  @doc "Answers a result of `decode/1` as `reply/2` does."
+  @spec reply_to({:ok, message()} | {:error, map()}, route()) :: map() | nil
+  def reply_to({:ok, {:request, id, method, params}}, route), do: answer(id, route.(method, params))
+  def reply_to({:ok, _notification_or_response}, _route), do: nil
+  def reply_to({:error, response}, _route), do: response
 
   defp answer(id, {:ok, result}), do: result_response(id, result)
   defp answer(id, {:error, error}), do: error_response(id, error)

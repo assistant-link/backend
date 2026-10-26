@@ -53,6 +53,17 @@ defmodule AssistantLink.EventsTest do
     end
   end
 
+  test "acknowledge/2 advances nothing and marks nothing delivered for a deleted account", %{scope: scope, link: link} do
+    event = user_message(scope, link)
+    :ok = Accounts.delete_account(scope)
+
+    assert :ok = Events.acknowledge(link.id, event.id)
+
+    refute_receive {:event_updated, _event}
+    assert Repo.get!(AssistantLink.Links.Link, link.id).last_read_seq == 1
+    assert Repo.get!(Event, event.id).delivered_at == nil
+  end
+
   test "create_text_message/3 sends event_created once, and not for a repeated or rejected message", %{
     scope: scope,
     link: link

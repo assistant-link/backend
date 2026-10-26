@@ -151,7 +151,9 @@ defmodule AssistantLink.Links do
   defp pair_link(link, pairing_code, now) do
     token = Tokens.generate(:link)
     Repo.update_all(from(c in PairingCode, where: c.id == ^pairing_code.id), set: [used_at: now])
-    link = link |> Ecto.Changeset.change(token_hash: Tokens.hash(token), paired_at: now) |> Repo.update!()
+    # The Assistant row is read without a lock: a message stored at this moment may or may not be delivered.
+    changes = [token_hash: Tokens.hash(token), paired_at: now, last_read_seq: link.assistant.last_event_seq]
+    link = link |> Ecto.Changeset.change(changes) |> Repo.update!()
 
     {:ok, %{link: link, token: token}}
   end

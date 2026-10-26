@@ -3,19 +3,21 @@ defmodule AssistantLinkWeb.API.EventJSON do
 
   def show(%{event: event}), do: %{event: event(event)}
 
+  @doc "The event as the params of `event.deliver`."
+  def delivery(event) do
+    base = %{id: event.id, type: event.type, created_at: event.inserted_at, deleted: deleted?(event)}
+    Map.merge(base, payload(event))
+  end
+
   def event(event) do
-    base = %{
-      id: event.id,
+    own = %{
       assistant_id: event.assistant_id,
-      type: event.type,
       sender: event.sender,
       link_id: event.link_id,
-      created_at: event.inserted_at,
-      deleted: deleted?(event),
       idempotency_key: event.idempotency_key
     }
 
-    base |> Map.merge(delivery_status(event)) |> Map.merge(payload(event))
+    event |> delivery() |> Map.merge(own) |> Map.merge(delivery_status(event))
   end
 
   defp deleted?(event), do: event.type == :text_message and is_nil(event.text_message)
