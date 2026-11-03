@@ -20,6 +20,9 @@ config :assistant_link, AssistantLinkWeb.Endpoint,
   secret_key_base: "gdSYV1y4S4IS+ZbVxlyrAUuR+e3kImDuPhJZBo9K7WM5TbO44eU6Uyl0IikHI84f",
   server: false
 
+config :assistant_link, AssistantLinkWeb.Webhook,
+  req_options: [plug: {Req.Test, AssistantLinkWeb.Webhook}, retry_delay: 0]
+
 # Only in tests, remove the complexity from the password hashing algorithm
 config :bcrypt_elixir, :log_rounds, 1
 

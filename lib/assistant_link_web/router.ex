@@ -82,6 +82,9 @@ defmodule AssistantLinkWeb.Router do
     pipe_through [:api, :require_link_token]
 
     get "/link", LinkController, :show
+    get "/link/webhook", WebhookController, :show
+    put "/link/webhook", WebhookController, :update
+    delete "/link/webhook", WebhookController, :delete
     post "/messages", MessageController, :create
   end
 

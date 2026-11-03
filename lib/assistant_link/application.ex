@@ -16,7 +16,8 @@ defmodule AssistantLink.Application do
       {Phoenix.PubSub, name: AssistantLink.PubSub},
       AssistantLink.Presence,
       {Registry, keys: :unique, name: AssistantLink.Delivery.Registry},
-      {DynamicSupervisor, name: AssistantLink.Delivery.Supervisor, strategy: :one_for_one}
+      {DynamicSupervisor, name: AssistantLink.Delivery.Supervisor, strategy: :one_for_one},
+      {Task.Supervisor, name: AssistantLinkWeb.Webhook.Supervisor}
     ]
 
     children =
