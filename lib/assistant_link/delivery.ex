@@ -10,7 +10,10 @@ defmodule AssistantLink.Delivery do
   after `:retry_wait` ms, doubling per failed round up to 5 minutes. A new connection resets the wait
   and starts a round at once.
 
-  The process runs again when a connection joins, when a user's message of its Assistant is stored,
+  A connection that joins gets `:caught_up` once every event that was deliverable at that moment has been
+  acknowledged, at once when there was none.
+
+  The process runs again when a connection joins, when a user's event of its Assistant is stored,
   on each acknowledgement, and when the retry timer fires.
   """
   use GenServer, restart: :temporary
@@ -63,6 +66,7 @@ defmodule AssistantLink.Delivery do
        link_id: link.id,
        assistant_id: link.assistant_id,
        connections: [],
+       catching_up: %{},
        event: nil,
        attempt: nil,
        retry: nil,
@@ -76,13 +80,13 @@ defmodule AssistantLink.Delivery do
     Process.monitor(pid)
 
     state = cancel_retry(%{state | connections: [pid | state.connections], failed: [], wait: nil})
-    {:reply, :ok, run(state)}
+    {:reply, :ok, state |> track_catching_up(pid) |> run()}
   end
 
   @impl GenServer
   def handle_cast({:acknowledge, event_id}, state) do
     :ok = Events.acknowledge(state.link_id, event_id)
-    {:noreply, run(state)}
+    {:noreply, state |> report_caught_up() |> run()}
   end
 
   def handle_cast({:fail, attempt}, %{attempt: %{ref: attempt}} = state), do: {:noreply, fail_attempt(state)}
@@ -94,7 +98,12 @@ defmodule AssistantLink.Delivery do
   def handle_info(:retry, state), do: {:noreply, run(%{state | failed: [], retry: nil})}
 
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
-    state = %{state | connections: List.delete(state.connections, pid), failed: List.delete(state.failed, pid)}
+    state = %{
+      state
+      | connections: List.delete(state.connections, pid),
+        failed: List.delete(state.failed, pid),
+        catching_up: Map.delete(state.catching_up, pid)
+    }
 
     case state do
       %{connections: []} -> {:stop, :normal, state}
@@ -107,6 +116,25 @@ defmodule AssistantLink.Delivery do
     do: {:noreply, run(state)}
 
   def handle_info(_other_notice, state), do: {:noreply, state}
+
+  defp track_catching_up(state, pid) do
+    case Events.last_deliverable_seq(state.link_id) do
+      nil ->
+        send(pid, :caught_up)
+        state
+
+      seq ->
+        %{state | catching_up: Map.put(state.catching_up, pid, seq)}
+    end
+  end
+
+  defp report_caught_up(state) do
+    {caught_up, waiting} =
+      Enum.split_with(state.catching_up, fn {_pid, seq} -> not Events.waiting?(state.link_id, seq) end)
+
+    for {pid, _seq} <- caught_up, do: send(pid, :caught_up)
+    %{state | catching_up: Map.new(waiting)}
+  end
 
   # The event being delivered is left alone while an attempt is in flight or a retry is waiting.
   # Another one, or none, replaces it with a fresh round.

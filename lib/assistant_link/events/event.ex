@@ -2,13 +2,14 @@ defmodule AssistantLink.Events.Event do
   @moduledoc """
   One item of an Assistant's Timeline. `seq` orders the events of one Assistant. A `text_message` whose
   payload was deleted has no `text_message` row.
+  A call event has no payload.
   """
   use AssistantLink.Schema
 
   @type t :: %__MODULE__{}
 
   schema "assistant_events" do
-    field :type, Ecto.Enum, values: [:link_created, :text_message]
+    field :type, Ecto.Enum, values: [:link_created, :text_message, :call_started, :call_ended]
     field :sender, Ecto.Enum, values: [:user, :assistant, :system]
     field :seq, :integer
     field :delivered_at, :utc_datetime_usec

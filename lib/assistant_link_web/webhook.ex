@@ -1,20 +1,21 @@
 defmodule AssistantLinkWeb.Webhook do
   @moduledoc """
-  Wakes agents: posts a user's new text message, as `event.deliver` sends it, to the webhook of each
-  paired Link of the Assistant. It is a best-effort signal; delivery over the agent connection stays
-  the reliable path. Transport errors, 408, 429 and 5xx are retried up to 3 times.
+  Wakes agents: posts `{"type": "wake", "link_id": ...}` to the webhook of each offline paired Link of the
+  Assistant when the user sends a text message or starts a call, at most once per Link in 30 seconds.
+  It is a best-effort signal; delivery over the agent connection stays the reliable path. Transport
+  errors, 408, 429 and 5xx are retried up to 3 times.
   """
   alias AssistantLink.Events.Event
   alias AssistantLink.Links
-  alias AssistantLinkWeb.API.EventJSON
 
   require Logger
 
   @spec notify(Event.t()) :: :ok
-  def notify(%Event{} = event) do
-    body = EventJSON.delivery(event)
+  def notify(%Event{type: :call_ended}), do: :ok
 
-    for link <- Links.list_webhook_links(event) do
+  def notify(%Event{} = event) do
+    for link <- Links.claim_wake_links(event) do
+      body = %{type: :wake, link_id: link.id}
       Task.Supervisor.start_child(__MODULE__.Supervisor, fn -> post(link, body) end)
     end
 

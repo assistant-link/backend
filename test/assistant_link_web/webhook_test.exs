@@ -2,12 +2,14 @@ defmodule AssistantLinkWeb.WebhookTest do
   use AssistantLinkWeb.ConnCase, async: true
 
   import AssistantLink.LinksFixtures
+  import Ecto.Query, only: [from: 2]
   import ExUnit.CaptureLog
 
   alias AssistantLink.Events
   alias AssistantLink.Links
+  alias AssistantLink.Links.Link
+  alias AssistantLink.Presence
   alias AssistantLink.Repo
-  alias AssistantLinkWeb.API.EventJSON
 
   setup :register_device
 
@@ -25,23 +27,64 @@ defmodule AssistantLinkWeb.WebhookTest do
     %{link: link, assistant: Repo.preload(link, :assistant).assistant}
   end
 
+  defp post_call_event(conn, assistant, type) do
+    params = %{"type" => type, "idempotency_key" => Ecto.UUID.generate(version: 7)}
+    post(conn, ~p"/api/v1/assistants/#{assistant.id}/call_events", params)
+  end
+
   defp post_message(conn, assistant, params \\ %{}) do
     params = Map.merge(%{"text" => "Hi", "idempotency_key" => Ecto.UUID.generate(version: 7)}, params)
     post(conn, ~p"/api/v1/assistants/#{assistant.id}/messages", params)
   end
 
-  test "posts the delivery event to the webhook of a paired Link", %{conn: conn, assistant: assistant} do
-    body = conn |> post_message(assistant) |> json_response(201)
+  test "posts a wake ping to the webhook of an offline Link", %{conn: conn, link: link, assistant: assistant} do
+    conn |> post_message(assistant) |> json_response(201)
 
     assert_receive {:webhook, "/hook", ["Bearer secret"], json}, 1000
-    assert Jason.decode!(json) == Jason.decode!(Jason.encode!(delivery(body["message"]["id"])))
+    assert Jason.decode!(json) == %{"type" => "wake", "link_id" => link.id}
   end
 
-  test "includes via in the text message when set", %{conn: conn, assistant: assistant} do
-    post_message(conn, assistant, %{"via" => "voice"})
+  test "pings for call_started but not for call_ended", %{conn: conn, assistant: assistant} do
+    post_call_event(conn, assistant, "call_ended")
+    refute_receive {:webhook, _path, _auth, _json}
 
-    assert_receive {:webhook, "/hook", _authorization, json}, 1000
-    assert %{"text_message" => %{"text" => "Hi", "via" => "voice"}} = Jason.decode!(json)
+    post_call_event(conn, assistant, "call_started")
+    assert_receive {:webhook, "/hook", _auth, _json}, 1000
+  end
+
+  test "does not ping a Link with a live connection", %{conn: conn, link: link, assistant: assistant} do
+    :ok = Links.connect(link)
+    post_message(conn, assistant)
+    refute_receive {:webhook, _path, _auth, _json}
+  end
+
+  test "pings a burst once", %{conn: conn, assistant: assistant} do
+    post_message(conn, assistant)
+    post_message(conn, assistant)
+    post_call_event(conn, assistant, "call_started")
+
+    assert_receive {:webhook, "/hook", _auth, _json}, 1000
+    refute_receive {:webhook, _path, _auth, _json}
+  end
+
+  test "pings again after the Link connected and disconnected", %{conn: conn, link: link, assistant: assistant} do
+    post_message(conn, assistant)
+    assert_receive {:webhook, "/hook", _auth, _json}, 1000
+
+    :ok = Links.connect(link)
+    Presence.untrack(self(), Presence.topic(link.account_id), link.id)
+    post_message(conn, assistant)
+    assert_receive {:webhook, "/hook", _auth, _json}, 1000
+  end
+
+  test "pings again after the debounce", %{conn: conn, link: link, assistant: assistant} do
+    post_message(conn, assistant)
+    assert_receive {:webhook, "/hook", _auth, _json}, 1000
+
+    past = DateTime.shift(DateTime.utc_now(), second: -31)
+    Repo.update_all(from(l in Link, where: l.id == ^link.id), set: [webhook_pinged_at: past])
+    post_message(conn, assistant)
+    assert_receive {:webhook, "/hook", _auth, _json}, 1000
   end
 
   test "sends no authorization header when none is set", %{conn: conn, link: link, assistant: assistant} do
@@ -114,9 +157,5 @@ defmodule AssistantLinkWeb.WebhookTest do
   defp await_webhooks do
     refs = for pid <- Task.Supervisor.children(AssistantLinkWeb.Webhook.Supervisor), do: Process.monitor(pid)
     for ref <- refs, do: assert_receive({:DOWN, ^ref, :process, _pid, _reason}, 5000)
-  end
-
-  defp delivery(event_id) do
-    AssistantLink.Events.Event |> Repo.get!(event_id) |> Repo.preload(:text_message) |> EventJSON.delivery()
   end
 end

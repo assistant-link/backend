@@ -160,7 +160,8 @@ defmodule AssistantLink.Links do
 
   @doc """
   Registers the calling process as an agent connection of a paired Link and records the Link as active
-  now. The Link is online while any of its connection processes lives; call `disconnect/1` before the
+  now. A connection also lifts the wake-up debounce. The Link is online while any of its connection
+  processes lives; call `disconnect/1` before the
   process exits to record when the connection closed.
   """
   @spec connect(Link.t()) :: :ok
@@ -178,7 +179,7 @@ defmodule AssistantLink.Links do
 
   defp record_activity(%Link{id: id}) do
     now = DateTime.utc_now()
-    Repo.update_all(from(l in Link, where: l.id == ^id), set: [last_active_at: now])
+    Repo.update_all(from(l in Link, where: l.id == ^id), set: [last_active_at: now, webhook_pinged_at: nil])
     now
   end
 
@@ -213,16 +214,38 @@ defmodule AssistantLink.Links do
     end
   end
 
-  @doc "The paired Links of the event's Assistant that have a webhook, unless the account was deleted."
-  @spec list_webhook_links(Events.Event.t()) :: [Link.t()]
-  def list_webhook_links(%Events.Event{} = event) do
-    Repo.all(
-      from l in Link,
-        join: a in Account,
-        on: a.id == l.account_id,
-        where: l.assistant_id == ^event.assistant_id and l.account_id == ^event.account_id,
-        where: not is_nil(l.paired_at) and not is_nil(l.webhook_url) and is_nil(a.deleted_at)
-    )
+  @doc """
+  The paired Links of the event's Assistant to ping with a wake-up: those with a webhook and no live
+  connection, unless the account was deleted. Each Link returned is marked as pinged now, and a Link
+  pinged less than 30 seconds ago is left out.
+  """
+  @spec claim_wake_links(Events.Event.t()) :: [Link.t()]
+  def claim_wake_links(%Events.Event{} = event) do
+    candidates =
+      Repo.all(
+        from l in Link,
+          join: a in Account,
+          on: a.id == l.account_id,
+          where: l.assistant_id == ^event.assistant_id and l.account_id == ^event.account_id,
+          where: not is_nil(l.paired_at) and not is_nil(l.webhook_url) and is_nil(a.deleted_at)
+      )
+
+    Enum.filter(candidates, &(status(&1) == :offline and claim_wake(&1)))
+  end
+
+  defp claim_wake(%Link{id: id}) do
+    now = DateTime.utc_now()
+
+    {claimed, _links} =
+      Repo.update_all(
+        from(l in Link,
+          where:
+            l.id == ^id and (is_nil(l.webhook_pinged_at) or l.webhook_pinged_at <= ^DateTime.shift(now, second: -30))
+        ),
+        set: [webhook_pinged_at: now]
+      )
+
+    claimed == 1
   end
 
   @doc """

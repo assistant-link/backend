@@ -52,6 +52,11 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
     {request["id"], request["params"]}
   end
 
+  defp assert_caught_up(client),
+    do: assert_receive({:ws, ^client, {:text, %{"method" => "connection.caught_up"}}}, 1_000)
+
+  defp call_params(type), do: %{"type" => type, "idempotency_key" => Ecto.UUID.generate(version: 7)}
+
   defp refute_delivery(client), do: refute_receive({:ws, ^client, {:text, %{"method" => "event.deliver"}}}, 150)
 
   defp reply(client, message), do: send_text(client, Jason.encode!(Map.put(message, :jsonrpc, "2.0")))
@@ -91,6 +96,37 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
     assert_receive {:DOWN, ^ref, :process, _pid, :normal}
   end
 
+  describe "connection.caught_up" do
+    test "is sent after ready when nothing was waiting, once", context do
+      client = connect_agent(context)
+
+      assert_caught_up(client)
+      refute_receive {:ws, ^client, {:text, %{"method" => "connection.caught_up"}}}, 150
+    end
+
+    test "is sent after the backlog is acknowledged, and later events do not repeat it",
+         %{scope: scope, assistant: assistant} = context do
+      user_message_fixture(scope, assistant, "a")
+      second = user_message_fixture(scope, assistant, "b")
+      client = connect_agent(context)
+
+      {id, %{"id" => first_id}} = receive_delivery(client)
+      acknowledge(client, id, first_id)
+      refute_receive {:ws, ^client, {:text, %{"method" => "connection.caught_up"}}}, 150
+
+      {id, %{"id" => second_id}} = receive_delivery(client)
+      assert second_id == second.id
+      acknowledge(client, id, second_id)
+      assert_caught_up(client)
+
+      later = user_message_fixture(scope, assistant, "c")
+      {id, %{"id" => later_id}} = receive_delivery(client)
+      assert later_id == later.id
+      acknowledge(client, id, later_id)
+      refute_receive {:ws, ^client, {:text, %{"method" => "connection.caught_up"}}}, 150
+    end
+  end
+
   describe "event.deliver" do
     test "sends a stored message as a request with the event as params",
          %{scope: scope, assistant: assistant} = context do
@@ -122,6 +158,20 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
 
       assert_receive {:ws, ^client, {:text, request}}, 1_000
       assert request["params"]["text_message"] == %{"text" => "Hi", "via" => "voice"}
+    end
+
+    test "sends a call event without content", %{scope: scope, assistant: assistant} = context do
+      {:ok, event, :created} = Events.create_call_event(scope, assistant.id, call_params("call_started"))
+      client = connect_agent(context)
+
+      assert {_id, params} = receive_delivery(client)
+
+      assert params == %{
+               "id" => event.id,
+               "type" => "call_started",
+               "created_at" => DateTime.to_iso8601(event.inserted_at),
+               "deleted" => false
+             }
     end
 
     test "sends an event without content when its text was deleted", %{scope: scope, assistant: assistant} = context do
