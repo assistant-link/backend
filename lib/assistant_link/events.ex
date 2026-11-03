@@ -81,8 +81,8 @@ defmodule AssistantLink.Events do
   end
 
   @doc """
-  Stores a user's text message to one of the scope's Assistants. Params are `"text"` and
-  `"idempotency_key"` (a UUIDv7).
+  Stores a user's text message to one of the scope's Assistants. Params are `"text"`,
+  `"idempotency_key"` (a UUIDv7) and an optional `"via"`, `"voice"` for a transcribed utterance.
 
   A stored key returns its event as `{:ok, event, :existing}`, or `{:error, :idempotency_key_conflict}`
   when the text or the Assistant differs. Checks run in this order: Assistant, stored key, text and
@@ -161,8 +161,9 @@ defmodule AssistantLink.Events do
     text = params["text"]
 
     with :ok <- TextMessage.validate_text(text),
+         {:ok, via} <- cast_via(template, params["via"]),
          {:ok, key} <- cast_key(template, params["idempotency_key"]),
-         {:ok, event} <- Repo.transact(fn -> insert_text_message(template, text, key) end) do
+         {:ok, event} <- Repo.transact(fn -> insert_text_message(template, text, via, key) end) do
       broadcast(event.account_id, {:event_created, event})
       {:ok, event, :created}
     else
@@ -171,6 +172,11 @@ defmodule AssistantLink.Events do
       {:error, _reason} = error -> error
     end
   end
+
+  defp cast_via(%Event{sender: :assistant}, _via), do: {:ok, nil}
+  defp cast_via(_template, nil), do: {:ok, nil}
+  defp cast_via(_template, "voice"), do: {:ok, :voice}
+  defp cast_via(_template, _via), do: {:error, :invalid_params}
 
   defp cast_key(%Event{sender: :assistant}, nil), do: {:ok, nil}
 
@@ -183,10 +189,10 @@ defmodule AssistantLink.Events do
     end
   end
 
-  defp insert_text_message(template, text, key) do
+  defp insert_text_message(template, text, via, key) do
     with :ok <- check_paired(template),
          {:ok, event} <- insert_event(%{template | type: :text_message, idempotency_key: key}) do
-      payload = Repo.insert!(%TextMessage{event_id: event.id, account_id: event.account_id, text: text})
+      payload = Repo.insert!(%TextMessage{event_id: event.id, account_id: event.account_id, text: text, via: via})
       {:ok, %{event | text_message: payload}}
     else
       {:error, :no_paired_link} = error -> error

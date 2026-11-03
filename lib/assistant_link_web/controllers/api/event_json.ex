@@ -27,6 +27,7 @@ defmodule AssistantLinkWeb.API.EventJSON do
 
   defp delivery_status(_event), do: %{}
 
-  defp payload(%{text_message: %{text: text}}), do: %{text_message: %{text: text}}
+  defp payload(%{text_message: %{text: text, via: nil}}), do: %{text_message: %{text: text}}
+  defp payload(%{text_message: %{text: text, via: via}}), do: %{text_message: %{text: text, via: via}}
   defp payload(_event), do: %{}
 end

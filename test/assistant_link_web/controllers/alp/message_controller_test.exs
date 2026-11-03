@@ -46,6 +46,12 @@ defmodule AssistantLinkWeb.ALP.MessageControllerTest do
       refute_receive {:link_status, _change}
     end
 
+    test "ignores via", %{conn: conn} do
+      conn = post_message(conn, %{"text" => "Hi", "via" => "voice"})
+
+      assert %TextMessage{via: nil} = Repo.get!(TextMessage, json_response(conn, 201)["message_id"])
+    end
+
     test "works without an idempotency key", %{conn: conn} do
       ids =
         for _message <- 1..2,

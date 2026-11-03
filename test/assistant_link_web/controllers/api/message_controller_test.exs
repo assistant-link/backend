@@ -152,6 +152,38 @@ defmodule AssistantLinkWeb.API.MessageControllerTest do
     end
   end
 
+  describe "via" do
+    test "stores voice and renders it in the message", %{conn: conn, assistant: assistant} do
+      params = %{"text" => "Hi", "via" => "voice", "idempotency_key" => key()}
+      conn = send_message(conn, assistant.id, params)
+
+      assert %{"id" => id, "text_message" => %{"text" => "Hi", "via" => "voice"}} = json_response(conn, 201)["message"]
+      assert %TextMessage{via: :voice} = Repo.get!(TextMessage, id)
+    end
+
+    test "is omitted when null", %{conn: conn, assistant: assistant} do
+      params = %{"text" => "Hi", "via" => nil, "idempotency_key" => key()}
+
+      assert json_response(send_message(conn, assistant.id, params), 201)["message"]["text_message"] ==
+               %{"text" => "Hi"}
+    end
+
+    test "rejects any other value", %{conn: conn, assistant: assistant} do
+      for via <- ["typed", "Voice", 5] do
+        params = %{"text" => "Hi", "via" => via, "idempotency_key" => key()}
+        assert error_code(send_message(conn, assistant.id, params), 422) == "invalid_params"
+      end
+
+      assert Repo.aggregate(TextMessage, :count) == 0
+    end
+
+    test "a repeat with a different via is the same message", %{conn: conn, assistant: assistant} do
+      params = %{"text" => "Hi", "idempotency_key" => key()}
+      assert send_message(conn, assistant.id, params).status == 201
+      assert send_message(conn, assistant.id, Map.put(params, "via", "voice")).status == 200
+    end
+  end
+
   describe "check order" do
     test "404 comes before a bad text", %{conn: conn} do
       assert error_code(send_message(conn, Ecto.UUID.generate(), %{"text" => ""}), 404) == "not_found"

@@ -12,6 +12,7 @@ defmodule AssistantLink.Events.TextMessage do
 
   schema "text_messages" do
     field :text, :string
+    field :via, Ecto.Enum, values: [:voice]
 
     belongs_to :account, AssistantLink.Accounts.Account
   end
