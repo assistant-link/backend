@@ -58,6 +58,8 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
+# A Link's webhook `authorization` is a secret.
+config :phoenix, :filter_parameters, ["password", "authorization"]
 config :phoenix, :json_library, Jason
 
 config :phoenix_live_view,

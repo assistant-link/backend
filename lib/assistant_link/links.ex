@@ -188,6 +188,43 @@ defmodule AssistantLink.Links do
   def status(%Link{id: id, account_id: account_id}),
     do: if(Presence.online?(account_id, id), do: :online, else: :offline)
 
+  @doc "Sets or replaces the Link's webhook. See `Link.webhook_changeset/2`."
+  @spec put_webhook(Link.t(), map()) :: {:ok, Link.t()} | {:error, Ecto.Changeset.t()}
+  def put_webhook(%Link{} = link, params), do: link |> Link.webhook_changeset(params) |> Repo.update()
+
+  @spec delete_webhook(Link.t()) :: {:ok, Link.t()}
+  def delete_webhook(%Link{} = link),
+    do: link |> Ecto.Changeset.change(webhook_url: nil, webhook_authorization: nil) |> Repo.update()
+
+  @doc """
+  The Link's webhook with its authorization masked, or `nil`: the first word of a value with a space is
+  kept (`Bearer ***`), any other value is `***`.
+  """
+  @spec show_webhook(Link.t()) :: %{url: String.t(), authorization: String.t() | nil} | nil
+  def show_webhook(%Link{webhook_url: nil}), do: nil
+  def show_webhook(%Link{} = link), do: %{url: link.webhook_url, authorization: mask(link.webhook_authorization)}
+
+  defp mask(nil), do: nil
+
+  defp mask(authorization) do
+    case String.split(authorization, " ", parts: 2) do
+      [scheme, _credentials] -> scheme <> " ***"
+      [_credentials] -> "***"
+    end
+  end
+
+  @doc "The paired Links of the event's Assistant that have a webhook, unless the account was deleted."
+  @spec list_webhook_links(Events.Event.t()) :: [Link.t()]
+  def list_webhook_links(%Events.Event{} = event) do
+    Repo.all(
+      from l in Link,
+        join: a in Account,
+        on: a.id == l.account_id,
+        where: l.assistant_id == ^event.assistant_id and l.account_id == ^event.account_id,
+        where: not is_nil(l.paired_at) and not is_nil(l.webhook_url) and is_nil(a.deleted_at)
+    )
+  end
+
   @doc """
   Returns the paired Link for a Link token, with its Assistant preloaded, or `nil` if no Link has it.
   A Link of a deleted account finds nothing.
