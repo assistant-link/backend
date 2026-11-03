@@ -18,6 +18,7 @@ defmodule AssistantLink.Links.Link do
     field :last_read_seq, :integer, default: 0
     field :webhook_url, :string
     field :webhook_authorization, :string, redact: true
+    field :webhook_pinged_at, :utc_datetime_usec
 
     belongs_to :account, AssistantLink.Accounts.Account
     belongs_to :assistant, AssistantLink.Assistants.Assistant

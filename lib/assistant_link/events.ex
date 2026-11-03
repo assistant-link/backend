@@ -3,7 +3,7 @@ defmodule AssistantLink.Events do
   An Assistant's Timeline: its events, in order of `seq`.
 
   Subscribers to the account (see `AssistantLink.Accounts.subscribe/1`) get `{:event_created, event}`
-  for each stored text message and `{:event_updated, event}` when a user message is first delivered.
+  for each stored text message or call event and `{:event_updated, event}` when a user message is first delivered.
   """
   import Ecto.Query, warn: false
 
@@ -108,6 +108,53 @@ defmodule AssistantLink.Events do
   end
 
   @doc """
+  Stores a user's call event for one of the scope's Assistants. Params are `"type"`, `"call_started"` or
+  `"call_ended"`, and `"idempotency_key"` (a UUIDv7). A stored key returns its event as
+  `{:ok, event, :existing}`, or `{:error, :idempotency_key_conflict}` when the type or the Assistant differs.
+  """
+  @spec create_call_event(Scope.t(), String.t(), map()) ::
+          {:ok, Event.t(), :created | :existing}
+          | {:error, :not_found | :idempotency_key_conflict | :invalid_params}
+  def create_call_event(%Scope{} = scope, assistant_id, params) do
+    with %Assistant{} = assistant <- Assistants.get_assistant(scope, assistant_id),
+         {:ok, type} <- cast_call_type(params["type"]) do
+      template = %Event{account_id: assistant.account_id, assistant_id: assistant.id, sender: :user, type: type}
+      store_call_event(template, params["idempotency_key"])
+    else
+      nil -> {:error, :not_found}
+      {:error, :invalid_params} = error -> error
+    end
+  end
+
+  defp cast_call_type("call_started"), do: {:ok, :call_started}
+  defp cast_call_type("call_ended"), do: {:ok, :call_ended}
+  defp cast_call_type(_type), do: {:error, :invalid_params}
+
+  defp store_call_event(template, key) do
+    case stored(template.account_id, key) do
+      %Event{} = event -> replay_call_event(event, template)
+      nil -> insert_call_event(template, key)
+    end
+  end
+
+  defp replay_call_event(event, template) do
+    if {event.type, identity(event)} == {template.type, identity(template)},
+      do: {:ok, event, :existing},
+      else: {:error, :idempotency_key_conflict}
+  end
+
+  defp insert_call_event(template, key) do
+    with {:ok, uuid} <- cast_key(template, key),
+         {:ok, event} <- Repo.transact(fn -> insert_event(%{template | idempotency_key: uuid}) end) do
+      broadcast(event.account_id, {:event_created, event})
+      {:ok, event, :created}
+    else
+      {:error, %Ecto.Changeset{}} -> store_call_event(template, key)
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc """
   Stores an agent's text message as its Link's Assistant. Params are `"text"` and an optional
   `"idempotency_key"` (a UUIDv7) that only the same Link and text can repeat. Otherwise it works like
   `create_text_message/3`, without the paired Link check.
@@ -149,11 +196,13 @@ defmodule AssistantLink.Events do
   defp cast_text_uuid(_id), do: :error
 
   # A deleted payload has no text to differ from.
-  defp replay(%Event{text_message: stored_text} = event, template, text) do
+  defp replay(%Event{type: :text_message, text_message: stored_text} = event, template, text) do
     if (is_nil(stored_text) or stored_text.text == text) and identity(event) == identity(template),
       do: {:ok, event, :existing},
       else: {:error, :idempotency_key_conflict}
   end
+
+  defp replay(_event, _template, _text), do: {:error, :idempotency_key_conflict}
 
   defp identity(event), do: {event.assistant_id, event.sender, event.link_id}
 
@@ -227,7 +276,7 @@ defmodule AssistantLink.Events do
   end
 
   @doc """
-  The next event to deliver to a Link: the user's text message with the lowest `seq` after the Link's
+  The next event to deliver to a Link: the user's event with the lowest `seq` after the Link's
   cursor, a deleted one included. `nil` when there is none or the account was deleted.
   """
   @spec next_deliverable(Ecto.UUID.t()) :: Event.t() | nil
@@ -239,10 +288,18 @@ defmodule AssistantLink.Events do
   @spec count_deliverable(Ecto.UUID.t()) :: non_neg_integer()
   def count_deliverable(link_id), do: link_id |> deliverable() |> Repo.aggregate(:count)
 
-  defp user_messages, do: from(e in Event, where: e.type == :text_message and e.sender == :user)
+  defp user_events, do: from(e in Event, where: e.sender == :user)
+
+  @doc "The highest `seq` `next_deliverable/1` would return, `nil` when there is none."
+  @spec last_deliverable_seq(Ecto.UUID.t()) :: integer() | nil
+  def last_deliverable_seq(link_id), do: link_id |> deliverable() |> select([e], max(e.seq)) |> Repo.one()
+
+  @doc "Whether an event of seq `seq` or lower is still deliverable to the Link."
+  @spec waiting?(Ecto.UUID.t(), integer()) :: boolean()
+  def waiting?(link_id, seq), do: link_id |> deliverable() |> where([e], e.seq <= ^seq) |> Repo.exists?()
 
   defp deliverable(link_id) do
-    from e in user_messages(),
+    from e in user_events(),
       join: l in Link,
       on: l.assistant_id == e.assistant_id and l.account_id == e.account_id,
       join: a in Account,
@@ -252,7 +309,7 @@ defmodule AssistantLink.Events do
 
   @doc """
   Moves the Link's cursor to the event a Link acknowledged and, for the first acknowledgement by any
-  Link, calls `mark_delivered/2`. An `event_id` that is not a user's text message of the Link's
+  Link, calls `mark_delivered/2`. An `event_id` that is not a user's event of the Link's
   Assistant after its cursor changes nothing, so the cursor never moves backward.
   """
   @spec acknowledge(Ecto.UUID.t(), term()) :: :ok
@@ -268,7 +325,7 @@ defmodule AssistantLink.Events do
   defp advance_cursor(link_id, event_id) do
     advance =
       from l in Link,
-        join: e in ^user_messages(),
+        join: e in ^user_events(),
         on: e.assistant_id == l.assistant_id and e.account_id == l.account_id,
         join: a in Account,
         on: a.id == l.account_id,
@@ -280,13 +337,13 @@ defmodule AssistantLink.Events do
   end
 
   @doc """
-  Sets `delivered_at` of a user's text message of the account the first time only, and sends
+  Sets `delivered_at` of a user's event of the account the first time only, and sends
   `{:event_updated, event}` to the account's subscribers. Otherwise does nothing.
   """
   @spec mark_delivered(Ecto.UUID.t(), Ecto.UUID.t()) :: :ok
   def mark_delivered(account_id, event_id) do
     undelivered =
-      from e in user_messages(),
+      from e in user_events(),
         join: a in Account,
         on: a.id == e.account_id,
         where: e.id == ^event_id and e.account_id == ^account_id and is_nil(e.delivered_at) and is_nil(a.deleted_at),

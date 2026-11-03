@@ -23,6 +23,7 @@ defmodule AssistantLinkWeb.ALPConnectionTest do
   defp connect_agent(context, opts \\ []) do
     {:ok, client} = open(context.port, "/alp/v1/connect", context.token, opts)
     assert_receive {:ws, ^client, {:text, %{"method" => "connection.ready"}}}
+    assert_receive {:ws, ^client, {:text, %{"method" => "connection.caught_up"}}}
     client
   end
 

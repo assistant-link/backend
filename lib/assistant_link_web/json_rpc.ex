@@ -93,6 +93,9 @@ defmodule AssistantLinkWeb.JSONRPC do
   @spec notification(String.t(), map()) :: map()
   def notification(method, params), do: %{jsonrpc: "2.0", method: method, params: params}
 
+  @spec notification(String.t()) :: map()
+  def notification(method), do: %{jsonrpc: "2.0", method: method}
+
   @spec result_response(id(), term()) :: map()
   def result_response(id, result), do: %{jsonrpc: "2.0", id: id, result: result}
 

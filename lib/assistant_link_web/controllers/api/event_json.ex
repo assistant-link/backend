@@ -22,7 +22,7 @@ defmodule AssistantLinkWeb.API.EventJSON do
 
   defp deleted?(event), do: event.type == :text_message and is_nil(event.text_message)
 
-  defp delivery_status(%{type: :text_message, sender: :user, delivered_at: delivered_at}),
+  defp delivery_status(%{sender: :user, delivered_at: delivered_at}),
     do: %{delivery_status: if(delivered_at, do: :delivered, else: :sent)}
 
   defp delivery_status(_event), do: %{}

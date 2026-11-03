@@ -51,20 +51,20 @@ defmodule AssistantLink.LinksWebhookTest do
     assert Links.show_webhook(Repo.reload!(link)).url == "https://a.test"
   end
 
-  test "lists the paired Links with a webhook, none after the account is deleted" do
+  test "claims the offline paired Links with a webhook, none after the account is deleted" do
     scope = user_scope_fixture()
     {link, _token} = paired_link_fixture(scope)
     assistant = Repo.preload(link, :assistant).assistant
-    {plain, _token} = another_paired_link_fixture(scope, assistant)
+    {_plain, _token} = another_paired_link_fixture(scope, assistant)
     {:ok, unpaired} = Links.create_link(scope, assistant.id, %{})
     {:ok, link} = Links.put_webhook(link, %{"url" => "https://a.test"})
     {:ok, _unpaired} = Links.put_webhook(unpaired, %{"url" => "https://b.test"})
     event = user_message_fixture(scope, assistant)
 
-    assert Enum.map(Links.list_webhook_links(event), & &1.id) == [link.id]
-    refute plain.id in Enum.map(Links.list_webhook_links(event), & &1.id)
+    assert Enum.map(Links.claim_wake_links(event), & &1.id) == [link.id]
 
+    Repo.update_all(AssistantLink.Links.Link, set: [webhook_pinged_at: nil])
     :ok = Accounts.delete_account(scope)
-    assert Links.list_webhook_links(event) == []
+    assert Links.claim_wake_links(event) == []
   end
 end
