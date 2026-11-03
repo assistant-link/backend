@@ -37,6 +37,13 @@ defmodule AssistantLinkWeb.WebhookTest do
     assert Jason.decode!(json) == Jason.decode!(Jason.encode!(delivery(body["message"]["id"])))
   end
 
+  test "includes via in the text message when set", %{conn: conn, assistant: assistant} do
+    post_message(conn, assistant, %{"via" => "voice"})
+
+    assert_receive {:webhook, "/hook", _authorization, json}, 1000
+    assert %{"text_message" => %{"text" => "Hi", "via" => "voice"}} = Jason.decode!(json)
+  end
+
   test "sends no authorization header when none is set", %{conn: conn, link: link, assistant: assistant} do
     {:ok, _link} = Links.put_webhook(link, %{"url" => "https://a.test/hook"})
     post_message(conn, assistant)

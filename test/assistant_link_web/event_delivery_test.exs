@@ -115,6 +115,15 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert {:ok, _created_at, 0} = DateTime.from_iso8601(request["params"]["created_at"])
     end
 
+    test "includes via in the text message when set", %{scope: scope, assistant: assistant} = context do
+      params = %{"text" => "Hi", "via" => "voice", "idempotency_key" => Ecto.UUID.generate(version: 7)}
+      {:ok, _event, :created} = Events.create_text_message(scope, assistant.id, params)
+      client = connect_agent(context)
+
+      assert_receive {:ws, ^client, {:text, request}}, 1_000
+      assert request["params"]["text_message"] == %{"text" => "Hi", "via" => "voice"}
+    end
+
     test "sends an event without content when its text was deleted", %{scope: scope, assistant: assistant} = context do
       event = user_message_fixture(scope, assistant)
       Repo.delete!(Repo.get!(TextMessage, event.id))
