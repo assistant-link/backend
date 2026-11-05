@@ -4,7 +4,10 @@ defmodule AssistantLink.LinksTest do
   import AssistantLink.AccountsFixtures
   import AssistantLink.LinksFixtures
 
+  alias AssistantLink.Accounts
+  alias AssistantLink.Assistants
   alias AssistantLink.Events
+  alias AssistantLink.Links
 
   setup do
     scope = user_scope_fixture()
@@ -13,6 +16,26 @@ defmodule AssistantLink.LinksTest do
   end
 
   describe "pair/1" do
+    test "tells the account's subscribers the Link is offline, with no last active time", %{scope: scope} do
+      {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
+      {:ok, link} = Links.create_link(scope, assistant.id, %{})
+      {:ok, %{code: code}} = Links.issue_pairing_code(scope, link.id)
+      :ok = Accounts.subscribe(scope.account.id)
+      link_id = link.id
+
+      refute_received {:link_status, _change}
+      {:ok, _paired} = Links.pair(code)
+
+      assert_received {:link_status, %{link_id: ^link_id, status: :offline, last_active_at: nil}}
+    end
+
+    test "tells no one when the code is rejected", %{scope: scope} do
+      :ok = Accounts.subscribe(scope.account.id)
+
+      assert {:error, :invalid_code} = Links.pair("nope")
+      refute_received {:link_status, _change}
+    end
+
     test "starts the Link's cursor at the Assistant's last event", %{scope: scope, assistant: assistant} do
       user_message_fixture(scope, assistant)
       user_message_fixture(scope, assistant)

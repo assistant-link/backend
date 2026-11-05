@@ -2,6 +2,7 @@ defmodule AssistantLink.Links do
   @moduledoc false
   import Ecto.Query, warn: false
 
+  alias AssistantLink.Accounts
   alias AssistantLink.Accounts.Account
   alias AssistantLink.Accounts.Scope
   alias AssistantLink.Assistants
@@ -120,9 +121,20 @@ defmodule AssistantLink.Links do
 
     case Repo.one(lookup) do
       nil -> {:error, :invalid_code}
-      link_id -> Repo.transact(fn -> pair_locked_link(link_id, code_hash) end)
+      link_id -> link_id |> pair_in_transaction(code_hash) |> announce_paired()
     end
   end
+
+  defp pair_in_transaction(link_id, code_hash), do: Repo.transact(fn -> pair_locked_link(link_id, code_hash) end)
+
+  # After the commit, so a subscriber that reads the Link on the message sees it paired.
+  defp announce_paired({:ok, %{link: link}} = paired) do
+    change = %{link_id: link.id, status: :offline, last_active_at: link.last_active_at}
+    Phoenix.PubSub.broadcast(AssistantLink.PubSub, Accounts.topic(link.account_id), {:link_status, change})
+    paired
+  end
+
+  defp announce_paired({:error, _reason} = error), do: error
 
   # Locks the Link before reading its code again, in the same order as issue_for_locked_link/2, so a
   # code replaced or used meanwhile is seen as such. The account is checked again, as it may have been
