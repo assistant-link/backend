@@ -176,8 +176,8 @@ defmodule AssistantLink.Accounts do
   @doc """
   Subscribes the caller to its account's events, on every node:
 
-  - `{:link_status, %{link_id: id, status: :online | :offline, last_active_at: DateTime.t()}}` when a
-    Link comes online or goes offline
+  - `{:link_status, %{link_id: id, status: :online | :offline, last_active_at: DateTime.t() | nil}}` when a
+    Link is paired (`:offline`, with a `nil` `last_active_at` until it first connects), comes online or goes offline
   - `{:event_created, event}` for each stored text message, and `{:event_updated, event}` when a user
     message is first delivered (see `AssistantLink.Events`)
   - `:account_deleted` after the account was deleted

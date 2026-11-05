@@ -7,7 +7,9 @@ defmodule AssistantLinkWeb.AppConnectionTest do
   import AssistantLinkWeb.WebSocketClient
 
   alias AssistantLink.Accounts
+  alias AssistantLink.Assistants
   alias AssistantLink.Events
+  alias AssistantLink.Links
 
   setup :start_server
   setup :register_device
@@ -44,6 +46,7 @@ defmodule AssistantLinkWeb.AppConnectionTest do
   test "sends link.status when an agent connects and disconnects", %{app: app, scope: scope, port: port} do
     {link, token} = paired_link_fixture(scope)
     link_id = link.id
+    assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "offline"}}}}
 
     {:ok, agent} = open(port, "/alp/v1/connect", token)
 
@@ -69,6 +72,25 @@ defmodule AssistantLinkWeb.AppConnectionTest do
     :ok = close(app)
   end
 
+  test "sends link.status offline when a Link is paired, before any agent connects", %{app: app, scope: scope} do
+    {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
+    {:ok, link} = Links.create_link(scope, assistant.id, %{})
+    {:ok, %{code: code}} = Links.issue_pairing_code(scope, link.id)
+    link_id = link.id
+
+    {:ok, _paired} = Links.pair(code)
+
+    assert_receive {:ws, ^app,
+                    {:text,
+                     %{
+                       "jsonrpc" => "2.0",
+                       "method" => "link.status",
+                       "params" => %{"link_id" => ^link_id, "status" => "offline", "last_active_at" => nil}
+                     }}}
+
+    :ok = close(app)
+  end
+
   test "sends only its own account's link.status", %{app: app, port: port} do
     other = register_device(%{conn: build_conn()})
     {link, token} = paired_link_fixture(other.scope)
@@ -85,8 +107,9 @@ defmodule AssistantLinkWeb.AppConnectionTest do
   end
 
   describe "events" do
-    setup %{scope: scope} do
+    setup %{app: app, scope: scope} do
       {link, token} = paired_link_fixture(scope)
+      assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "offline"}}}}
       %{link: link, token: token}
     end
 
