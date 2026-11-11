@@ -233,16 +233,16 @@ defmodule AssistantLink.Links do
   """
   @spec claim_wake_links(Events.Event.t()) :: [Link.t()]
   def claim_wake_links(%Events.Event{} = event) do
-    claim_wake_links(from(l in Link, where: l.assistant_id == ^event.assistant_id), event.account_id)
+    claim_links(from(l in Link, where: l.assistant_id == ^event.assistant_id), event.account_id)
   end
 
   @doc """
   Like `claim_wake_links/1`, for every Assistant of the scope's account.
   """
   @spec claim_account_wake_links(Scope.t()) :: [Link.t()]
-  def claim_account_wake_links(%Scope{account: %{id: account_id}}), do: claim_wake_links(Link, account_id)
+  def claim_account_wake_links(%Scope{account: %{id: account_id}}), do: claim_links(Link, account_id)
 
-  defp claim_wake_links(links, account_id) do
+  defp claim_links(links, account_id) do
     candidates =
       Repo.all(
         from l in links,
