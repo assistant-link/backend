@@ -15,6 +15,8 @@ defmodule AssistantLinkWeb.InstallMdTest do
       assert body =~ expected
     end
 
+    refute body =~ "Service:"
+    assert body =~ "AL_SERVER"
     assert String.ends_with?(String.trim_trailing(body), "Run `al help` and follow it.")
   end
 end
