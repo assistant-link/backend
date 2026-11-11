@@ -101,7 +101,6 @@ defmodule AssistantLinkWeb.API.LinkControllerTest do
       assert text == """
              Connect to my assistant "Hermes" on Assistant Link.
              Follow the instructions at #{service_url}/install.md
-             Service: #{service_url}
              Pairing code: #{code} (expires #{Calendar.strftime(expires_at, "%H:%M")} UTC)
              """
     end

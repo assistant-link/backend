@@ -9,7 +9,6 @@ defmodule AssistantLinkWeb.API.PairingCodeJSON do
     """
     Connect to my assistant "#{assistant_name}" on Assistant Link.
     Follow the instructions at #{service_url}/install.md
-    Service: #{service_url}
     Pairing code: #{code} (expires #{Calendar.strftime(expires_at, "%H:%M")} UTC)
     """
   end

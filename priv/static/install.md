@@ -1,12 +1,11 @@
 # Connect an agent to Assistant Link
 
 Connect this host to the user's Assistant with the pairing text the user gave you. It names the Assistant and carries
-the service URL and a pairing code:
+the install link and a pairing code:
 
 ```
 Connect to my assistant "Hermes" on Assistant Link.
 Follow the instructions at https://assistant-link.fly.dev/install.md
-Service: https://assistant-link.fly.dev
 Pairing code: K7QM-2XPA (expires 14:32 UTC)
 ```
 
@@ -36,8 +35,9 @@ If `~/.local/bin` is not on your `PATH`, add it. With no binary for this host, b
 
 ## 2. Pair
 
-`al` uses `https://assistant-link.fly.dev`. If the "Service:" line names another URL, run `export AL_SERVER=<that URL>`
-first, and add the same line to the wrapper in step 3.
+`al` pairs with `https://assistant-link.fly.dev` by default; set nothing. Only if the install.md link is on another
+host (a self-hosted service), run `export AL_SERVER=<that host's URL>` first, and add the same line to the wrapper in
+step 3.
 
 ```sh
 mkdir -p -m 700 ~/.config/assistant-link
@@ -113,8 +113,9 @@ Stop and tell the user, instead of retrying, when:
 - `al pair` exits 4: the code is invalid, already used, or expired. Ask for new pairing text.
 - `al pair` refuses because the key file exists: it may hold another Link's key. Do not delete it; use another name.
 - `al status` exits 3: the key did not reach `al`. Check the storage command in the wrapper.
-- `al status` exits 4: the service did not accept the key. Check that `AL_SERVER` matches the "Service:" line; if it
-  does, the Link no longer exists (for example the user logged out of the app). Ask for new pairing text.
+- `al status` exits 4: the service did not accept the key. If the install.md link is on another host, check that
+  `AL_SERVER` is that host's URL. If it is, the Link no longer exists (for example the user logged out of the app).
+  Ask for new pairing text.
 - A command exits 5 several times over a minute: the service is unreachable. Report the service URL.
 - `al` cannot be installed: report `uname -sm` and the error.
 
