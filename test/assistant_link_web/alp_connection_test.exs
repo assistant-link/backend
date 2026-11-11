@@ -185,7 +185,7 @@ defmodule AssistantLinkWeb.ALPConnectionTest do
     test "the service pings, and a Link that answers stays online", %{link: link} = context do
       client = connect_agent(context)
 
-      for _ping <- 1..10, do: assert_receive({:ws, ^client, {:ping, _payload}})
+      for _ping <- 1..10, do: assert_receive({:ws, ^client, {:ping, _payload}}, 1_000)
 
       assert Links.status(link) == :online
       disconnect_last(client, link)
