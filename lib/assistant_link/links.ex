@@ -240,8 +240,7 @@ defmodule AssistantLink.Links do
   Like `claim_wake_links/1`, for every Assistant of the scope's account.
   """
   @spec claim_account_wake_links(Scope.t()) :: [Link.t()]
-  def claim_account_wake_links(%Scope{account: %{id: account_id}}),
-    do: claim_wake_links(Link, account_id)
+  def claim_account_wake_links(%Scope{account: %{id: account_id}}), do: claim_wake_links(Link, account_id)
 
   defp claim_wake_links(links, account_id) do
     candidates =
