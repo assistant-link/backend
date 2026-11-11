@@ -5,6 +5,7 @@ defmodule AssistantLinkWeb.Webhook do
   It is a best-effort signal; delivery over the agent connection stays the reliable path. Transport
   errors, 408, 429 and 5xx are retried up to 3 times.
   """
+  alias AssistantLink.Accounts.Scope
   alias AssistantLink.Events.Event
   alias AssistantLink.Links
 
@@ -13,8 +14,14 @@ defmodule AssistantLinkWeb.Webhook do
   @spec notify(Event.t()) :: :ok
   def notify(%Event{type: :call_ended}), do: :ok
 
-  def notify(%Event{} = event) do
-    for link <- Links.claim_wake_links(event) do
+  def notify(%Event{} = event), do: event |> Links.claim_wake_links() |> ping()
+
+  @doc "Wakes the offline paired Links with a webhook of every Assistant of the scope's account."
+  @spec wake_account(Scope.t()) :: :ok
+  def wake_account(%Scope{} = scope), do: scope |> Links.claim_account_wake_links() |> ping()
+
+  defp ping(links) do
+    for link <- links do
       body = %{type: :wake, link_id: link.id}
       Task.Supervisor.start_child(__MODULE__.Supervisor, fn -> post(link, body) end)
     end
