@@ -173,6 +173,22 @@ defmodule AssistantLinkWeb.API.AssistantControllerTest do
                Enum.map(links, &Map.take(&1, ["id", "status"]))
     end
 
+    test "a Link with a confirmed wake email and no connection is idle, an unconfirmed one offline", %{
+      conn: conn,
+      scope: scope
+    } do
+      {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
+      now = DateTime.utc_now()
+      idle = paired_link(scope, assistant, %{wake_email: "a@example.com", wake_email_confirmed_at: now})
+      offline = paired_link(scope, assistant, %{wake_email: "b@example.com"})
+
+      assert [%{"status" => "idle", "links" => links}] =
+               conn |> get(~p"/api/v1/assistants") |> json_response(200) |> Map.fetch!("assistants")
+
+      assert [%{"id" => idle.id, "status" => "idle"}, %{"id" => offline.id, "status" => "offline"}] ==
+               Enum.map(links, &Map.take(&1, ["id", "status"]))
+    end
+
     test "a connected Link with a webhook is online", %{conn: conn, scope: scope} do
       {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
       online = paired_link(scope, assistant, %{webhook_url: "https://a.test/hook"})

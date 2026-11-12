@@ -88,5 +88,7 @@ The release reads these at boot ([`config/runtime.exs`](../config/runtime.exs)).
 | `POOL_SIZE`         | no       | `5`                        | Database connections in the pool.                                                         |
 | `ECTO_IPV6`         | no       | off                        | `true` or `1` connects to the database over IPv6.                                         |
 | `DNS_CLUSTER_QUERY` | no       | none                       | DNS name used to find other nodes to cluster with. Leave unset for one node.              |
+| `RESEND_API_KEY`    | no       | none                       | [Resend](https://resend.com) API key for wake emails. Without it, no wake email is sent.  |
+| `WAKE_EMAIL_FROM`   | no       | `no-reply@mail.assistantlink.ai` | Sender of wake emails, on a domain verified in your Resend account.                |
 
-Keep `DATABASE_URL` and `SECRET_KEY_BASE` in your platform's secret store, never in the repository.
+Keep `DATABASE_URL`, `SECRET_KEY_BASE` and `RESEND_API_KEY` in your platform's secret store, never in the repository.

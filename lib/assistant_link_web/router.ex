@@ -18,6 +18,18 @@ defmodule AssistantLinkWeb.Router do
     plug :fetch_current_scope_for_user
   end
 
+  # The token in the path is the only credential, so there is no session and no CSRF token. The root
+  # layout's theme script is inline.
+  pipeline :token_page do
+    plug :accepts, ["html"]
+    plug :put_root_layout, html: {AssistantLinkWeb.Layouts, :root}
+
+    plug :put_secure_browser_headers, %{
+      "content-security-policy" =>
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+    }
+  end
+
   pipeline :api do
     plug :accepts, ["json"]
   end
@@ -34,6 +46,13 @@ defmodule AssistantLinkWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+  end
+
+  scope "/", AssistantLinkWeb do
+    pipe_through :token_page
+
+    get "/wake-email/confirm/:token", WakeEmailConfirmationController, :show
+    post "/wake-email/confirm/:token", WakeEmailConfirmationController, :create
   end
 
   scope "/", AssistantLinkWeb do
@@ -87,6 +106,9 @@ defmodule AssistantLinkWeb.Router do
     get "/link/webhook", WebhookController, :show
     put "/link/webhook", WebhookController, :update
     delete "/link/webhook", WebhookController, :delete
+    get "/link/wake_email", WakeEmailController, :show
+    put "/link/wake_email", WakeEmailController, :update
+    delete "/link/wake_email", WakeEmailController, :delete
     post "/messages", MessageController, :create
   end
 

@@ -53,4 +53,27 @@ defmodule AssistantLinkWeb.InstallMdTest do
     {failures, _} = :binary.match(body, "## If something fails")
     assert check < webhook and webhook < failures
   end
+
+  test "the instructions offer a confirmed wake email when the platform has no webhooks", %{conn: conn} do
+    body = conn |> get("/install.md") |> response(200)
+
+    for expected <- [
+          "PUT https://assistant-link.fly.dev/alp/v1/link/wake_email",
+          ~s({"address": "<your-email-address>"}),
+          "confirmation",
+          "24 hours",
+          "curl -X POST",
+          "Do not reply",
+          "al-hermes read",
+          "al-hermes send",
+          "DELETE"
+        ] do
+      assert body =~ expected
+    end
+
+    {webhook, _} = :binary.match(body, "## 5. Get woken up automatically")
+    {email, _} = :binary.match(body, "/alp/v1/link/wake_email")
+    {failures, _} = :binary.match(body, "## If something fails")
+    assert webhook < email and email < failures
+  end
 end

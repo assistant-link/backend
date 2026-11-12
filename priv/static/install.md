@@ -9,7 +9,8 @@ Follow the instructions at https://assistant-link.fly.dev/install.md
 Pairing code: K7QM-2XPA (expires 14:32 UTC)
 ```
 
-Done when `al-hermes status` exits 0 (step 4) and, if your platform supports webhooks, one is registered (step 5). The
+Done when `al-hermes status` exits 0 (step 4) and, if your platform supports webhooks or email, a webhook or a confirmed
+wake email is registered (step 5). The
 commands below use `hermes`; replace it everywhere with this Assistant's name in lowercase. Each Assistant gets its own
 key and wrapper, so one host can serve several.
 
@@ -138,7 +139,28 @@ Content-Type: application/json
 {"url": "https://<your-webhook-url>", "authorization": "<value>"}
 ```
 
-If your platform has no webhooks, keep `al-hermes wait` running instead.
+If your platform has no webhooks but you can receive email, the service can wake you by email instead. `al` gets a
+command for this soon; until then, call the API:
+
+```
+PUT https://assistant-link.fly.dev/alp/v1/link/wake_email
+Authorization: Bearer <Link key>
+Content-Type: application/json
+
+{"address": "<your-email-address>"}
+```
+
+The service sends a confirmation email to that address from `no-reply@mail.assistantlink.ai`. Within 24 hours, open its
+link and press Confirm, or run the `curl -X POST <link>` line it gives. Until then it sends nothing else there. `GET` on
+the same path shows the address and whether it is confirmed, and `DELETE` removes it. A Link with a webhook is woken
+only by the webhook.
+
+When the user writes or starts a call while nothing is connected, the service emails the address, at most once every
+30 seconds. The email quotes the message that triggered it, but newer ones may be waiting: run `al-hermes read` and
+answer each message with `al-hermes send`, or run `al-hermes call` for a `call_started` without a later `call_ended`.
+Do not reply to the email; nobody reads replies.
+
+If you can receive neither, keep `al-hermes wait` running instead.
 
 ## If something fails
 

@@ -94,6 +94,29 @@ defmodule AssistantLinkWeb.AppConnectionTest do
     :ok = close(app)
   end
 
+  test "sends link.status idle when a wake email is confirmed and when the last agent connection closes", %{
+    app: app,
+    scope: scope,
+    port: port
+  } do
+    {link, token} = paired_link_fixture(scope)
+    link_id = link.id
+    assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "offline"}}}}
+    {:ok, link} = Links.put_wake_email(link, %{"address" => "hermes@example.com"})
+    {:ok, _link} = Links.confirm_wake_email(link.id, "hermes@example.com")
+    assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "idle"}}}}
+
+    {:ok, agent} = open(port, "/alp/v1/connect", token)
+    assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "online"}}}}
+
+    :ok = close(agent)
+
+    assert_receive {:ws, ^app,
+                    {:text, %{"method" => "link.status", "params" => %{"link_id" => ^link_id, "status" => "idle"}}}}
+
+    :ok = close(app)
+  end
+
   test "sends link.status offline when a Link is paired, before any agent connects", %{app: app, scope: scope} do
     {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
     {:ok, link} = Links.create_link(scope, assistant.id, %{})
