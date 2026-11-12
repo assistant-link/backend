@@ -4,6 +4,7 @@ defmodule AssistantLinkWeb.ALP.WakeEmailControllerTest do
   import AssistantLink.LinksFixtures
 
   alias AssistantLink.Links
+  alias AssistantLink.Links.WakeEmailConfirmation
   alias AssistantLink.Repo
   alias AssistantLinkWeb.WakeEmail
 
@@ -16,6 +17,11 @@ defmodule AssistantLinkWeb.ALP.WakeEmailControllerTest do
 
   defp put_address(conn, address) do
     conn |> put(~p"/alp/v1/link/wake_email", %{"address" => address}) |> json_response(200)
+  end
+
+  defp sent_minutes_ago(minutes) do
+    sent_at = DateTime.shift(DateTime.utc_now(), minute: -minutes)
+    Repo.update_all(WakeEmailConfirmation, set: [inserted_at: sent_at])
   end
 
   defp confirmation_path do
@@ -70,12 +76,63 @@ defmodule AssistantLinkWeb.ALP.WakeEmailControllerTest do
     refute_receive {:email, _email}
   end
 
-  test "setting an unconfirmed address again sends another confirmation", %{conn: conn} do
+  test "setting an unconfirmed address again sends another confirmation only after 10 minutes", %{conn: conn} do
     put_address(conn, "hermes@example.com")
     confirmation_path()
 
+    assert put_address(conn, "hermes@example.com") ==
+             %{"wake_email" => %{"address" => "hermes@example.com", "confirmed" => false}}
+
+    refute_receive {:email, _email}
+
+    sent_minutes_ago(9)
+    put_address(conn, "hermes@example.com")
+    refute_receive {:email, _email}
+
+    sent_minutes_ago(10)
     put_address(conn, "hermes@example.com")
     assert {%{to: [{"", "hermes@example.com"}]}, _path} = confirmation_path()
+  end
+
+  test "a Link sends at most 5 confirmations an hour, to any addresses", %{conn: conn} do
+    for n <- 1..5 do
+      put_address(conn, "agent#{n}@example.com")
+      assert {%{to: [{"", "agent" <> _rest}]}, _path} = confirmation_path()
+    end
+
+    assert put_address(conn, "agent6@example.com") ==
+             %{"wake_email" => %{"address" => "agent6@example.com", "confirmed" => false}}
+
+    refute_receive {:email, _email}
+
+    sent_minutes_ago(59)
+    put_address(conn, "agent6@example.com")
+    refute_receive {:email, _email}
+
+    sent_minutes_ago(60)
+    put_address(conn, "agent6@example.com")
+    assert {%{to: [{"", "agent6@example.com"}]}, _path} = confirmation_path()
+  end
+
+  test "the last of 5 confirmations an hour still confirms the address", %{conn: conn, link: link} do
+    for_result =
+      for n <- 1..5 do
+        put_address(conn, "agent#{n}@example.com")
+        elem(confirmation_path(), 1)
+      end
+
+    {replaced_paths, [last_path]} = Enum.split(for_result, -1)
+
+    put_address(conn, "agent6@example.com")
+    put_address(conn, "agent5@example.com")
+    refute_receive {:email, _email}
+
+    for path <- replaced_paths do
+      assert build_conn() |> post(path) |> html_response(400) =~ "id=\"wake-email-invalid\""
+    end
+
+    assert build_conn() |> post(last_path) |> html_response(200) =~ "id=\"wake-email-confirmed\""
+    assert Links.show_wake_email(Repo.reload!(link)).confirmed
   end
 
   test "a link for an address that was replaced or cleared confirms nothing", %{conn: conn, link: link} do

@@ -7,6 +7,7 @@ defmodule AssistantLink.LinksWakeEmailTest do
   alias AssistantLink.Accounts
   alias AssistantLink.Links
   alias AssistantLink.Links.Link
+  alias AssistantLink.Links.WakeEmailConfirmation
 
   setup do
     scope = user_scope_fixture()
@@ -132,5 +133,72 @@ defmodule AssistantLink.LinksWakeEmailTest do
 
     assert Links.claim_account_wake_links(scope) == []
     assert Repo.get!(Link, link.id).webhook_pinged_at == nil
+  end
+
+  describe "claim_wake_email_confirmation/1" do
+    defp sent_minutes_ago(minutes) do
+      sent_at = DateTime.shift(DateTime.utc_now(), minute: -minutes)
+      Repo.update_all(WakeEmailConfirmation, set: [inserted_at: sent_at])
+    end
+
+    test "claims the first confirmation of an address, then none for 10 minutes", %{link: link} do
+      {:ok, link} = Links.put_wake_email(link, %{"address" => "agent@example.com"})
+      assert Links.claim_wake_email_confirmation(link)
+      refute Links.claim_wake_email_confirmation(link)
+
+      sent_minutes_ago(9)
+      refute Links.claim_wake_email_confirmation(link)
+
+      sent_minutes_ago(10)
+      assert Links.claim_wake_email_confirmation(link)
+    end
+
+    test "the cooldown is per address, whatever its case and whichever Link sets it", %{scope: scope, link: link} do
+      {other, _token} = another_paired_link_fixture(scope, Repo.preload(link, :assistant).assistant)
+      {:ok, link} = Links.put_wake_email(link, %{"address" => "agent@example.com"})
+      assert Links.claim_wake_email_confirmation(link)
+
+      {:ok, other} = Links.put_wake_email(other, %{"address" => "Agent@Example.com"})
+      refute Links.claim_wake_email_confirmation(other)
+
+      {:ok, other} = Links.put_wake_email(other, %{"address" => "other@example.com"})
+      assert Links.claim_wake_email_confirmation(other)
+    end
+
+    test "claims at most 5 confirmations of a Link an hour", %{link: link} do
+      for n <- 1..5 do
+        {:ok, link} = Links.put_wake_email(link, %{"address" => "agent#{n}@example.com"})
+        assert Links.claim_wake_email_confirmation(link)
+      end
+
+      {:ok, link} = Links.put_wake_email(link, %{"address" => "agent6@example.com"})
+      refute Links.claim_wake_email_confirmation(link)
+
+      sent_minutes_ago(59)
+      refute Links.claim_wake_email_confirmation(link)
+
+      sent_minutes_ago(60)
+      assert Links.claim_wake_email_confirmation(link)
+    end
+
+    test "claims nothing for a confirmed or cleared address", %{link: link} do
+      {:ok, link} = Links.put_wake_email(link, %{"address" => "agent@example.com"})
+      {:ok, link} = Links.confirm_wake_email(link.id, "agent@example.com")
+      refute Links.claim_wake_email_confirmation(link)
+
+      {:ok, link} = Links.delete_wake_email(link)
+      refute Links.claim_wake_email_confirmation(link)
+      assert Repo.aggregate(WakeEmailConfirmation, :count) == 0
+    end
+
+    test "a skipped confirmation does not let the unconfirmed address be woken", %{scope: scope, link: link} do
+      for n <- 1..6 do
+        {:ok, link} = Links.put_wake_email(Repo.reload!(link), %{"address" => "agent#{n}@example.com"})
+        Links.claim_wake_email_confirmation(link)
+      end
+
+      assistant = Repo.preload(link, :assistant).assistant
+      assert Links.claim_wake_links(user_message_fixture(scope, assistant)) == []
+    end
   end
 end
