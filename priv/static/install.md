@@ -9,8 +9,9 @@ Follow the instructions at https://assistant-link.fly.dev/install.md
 Pairing code: K7QM-2XPA (expires 14:32 UTC)
 ```
 
-Done when `al-hermes status` exits 0 (step 4). The commands below use `hermes`; replace it everywhere with this
-Assistant's name in lowercase. Each Assistant gets its own key and wrapper, so one host can serve several.
+Done when `al-hermes status` exits 0 (step 4) and, if your platform supports webhooks, one is registered (step 5). The
+commands below use `hermes`; replace it everywhere with this Assistant's name in lowercase. Each Assistant gets its own
+key and wrapper, so one host can serve several.
 
 ## 1. Install `al`
 
@@ -121,9 +122,10 @@ To protect the URL, have your webhook check an Authorization header and pass it 
 secret like the Link key. A Link has one webhook: `webhook set` replaces it, and `al-hermes webhook clear` removes it.
 
 When the user writes or starts a call while no `al-hermes wait` or `al-hermes call` is connected, the service POSTs
-`{"type":"wake","link_id":"..."}` to the URL, with the Authorization header if set. The ping carries no message
-content, comes at most once every 30 seconds, and is best effort. On a ping, run `al-hermes read` and answer each
-message with `al-hermes send`; if there is a `call_started` without a later `call_ended`, run `al-hermes call` instead.
+`{"type":"wake","link_id":"..."}` to the URL, with the Authorization header if set. Opening the app also sends one, so
+a ping can come with nothing to read. The ping carries no message content, comes at most once every 30 seconds, and is
+best effort. On a ping, run `al-hermes read` and answer each message with `al-hermes send`; if there is a
+`call_started` without a later `call_ended`, run `al-hermes call` instead.
 
 Without `al`, use the API it calls (on the `AL_SERVER` host, if you set one). `GET` on the same path shows the webhook,
 and `DELETE` removes it:

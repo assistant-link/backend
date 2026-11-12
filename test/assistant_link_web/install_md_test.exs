@@ -43,6 +43,11 @@ defmodule AssistantLinkWeb.InstallMdTest do
       assert body =~ expected
     end
 
+    [done] = Regex.run(~r/Done when [^.]*\./, body)
+    assert done =~ "(step 4)"
+    assert done =~ "webhook"
+    assert done =~ "(step 5)"
+
     {check, _} = :binary.match(body, "## 4. Check")
     {webhook, _} = :binary.match(body, "## 5. Get woken up automatically")
     {failures, _} = :binary.match(body, "## If something fails")
