@@ -17,12 +17,16 @@ defmodule AssistantLink.AccountDeletionTest do
   alias AssistantLink.Links
   alias AssistantLink.Links.Link
   alias AssistantLink.Links.PairingCode
+  alias AssistantLink.Links.WakeEmailConfirmation
 
-  @owned_by_account [TextMessage, Event, PairingCode, Link, Assistant, Device, Membership]
+  @owned_by_account [TextMessage, Event, PairingCode, WakeEmailConfirmation, Link, Assistant, Device, Membership]
 
-  # An account with a paired Link, a text message, and an unused pairing code.
+  # An account with a paired Link that sent a wake email confirmation, a text message, and an unused pairing code.
   defp populate(scope) do
     {link, link_token} = paired_link_fixture(scope)
+    address = "agent#{System.unique_integer([:positive])}@example.com"
+    {:ok, link} = Links.put_wake_email(link, %{"address" => address})
+    true = Links.claim_wake_email_confirmation(link)
 
     {:ok, _event, :created} =
       Events.create_text_message(scope, link.assistant_id, %{
