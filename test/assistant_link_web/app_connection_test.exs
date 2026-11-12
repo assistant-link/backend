@@ -72,6 +72,28 @@ defmodule AssistantLinkWeb.AppConnectionTest do
     :ok = close(app)
   end
 
+  test "sends link.status idle when the last agent connection of a Link with a webhook closes", %{
+    app: app,
+    scope: scope,
+    port: port
+  } do
+    {link, token} = paired_link_fixture(scope)
+    link_id = link.id
+    assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "offline"}}}}
+    {:ok, _link} = Links.put_webhook(link, %{"url" => "https://a.test/hook"})
+    assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "idle"}}}}
+
+    {:ok, agent} = open(port, "/alp/v1/connect", token)
+    assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "online"}}}}
+
+    :ok = close(agent)
+
+    assert_receive {:ws, ^app,
+                    {:text, %{"method" => "link.status", "params" => %{"link_id" => ^link_id, "status" => "idle"}}}}
+
+    :ok = close(app)
+  end
+
   test "sends link.status offline when a Link is paired, before any agent connects", %{app: app, scope: scope} do
     {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
     {:ok, link} = Links.create_link(scope, assistant.id, %{})
