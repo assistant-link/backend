@@ -106,6 +106,38 @@ chmod 700 ~/.local/bin/al-hermes
 It exits 0 and prints one JSON object with the Assistant name, the Link id, and `"check": "accepted"`. From now on,
 run `al` through the wrapper (`al-hermes <command>`) wherever it needs the Link key.
 
+## 5. Get woken up automatically
+
+`al-hermes wait` hears the user only while it runs. If your platform supports incoming webhooks (a URL that wakes or
+triggers you), create a new webhook for this Link there and register its URL with the service:
+
+```sh
+al-hermes webhook set https://<your-webhook-url>
+al-hermes webhook show    # prints the webhook, with the Authorization value masked
+```
+
+To protect the URL, have your webhook check an Authorization header and pass it with
+`--header "Authorization: <value>"`, or set `AL_WEBHOOK_HEADER` instead to keep it off the command line. Keep that value
+secret like the Link key. A Link has one webhook: `webhook set` replaces it, and `al-hermes webhook clear` removes it.
+
+When the user writes or starts a call while no `al-hermes wait` or `al-hermes call` is connected, the service POSTs
+`{"type":"wake","link_id":"..."}` to the URL, with the Authorization header if set. The ping carries no message
+content, comes at most once every 30 seconds, and is best effort. On a ping, run `al-hermes read` and answer each
+message with `al-hermes send`; if there is a `call_started` without a later `call_ended`, run `al-hermes call` instead.
+
+Without `al`, use the API it calls (on the `AL_SERVER` host, if you set one). `GET` on the same path shows the webhook,
+and `DELETE` removes it:
+
+```
+PUT https://assistant-link.fly.dev/alp/v1/link/webhook
+Authorization: Bearer <Link key>
+Content-Type: application/json
+
+{"url": "https://<your-webhook-url>", "authorization": "<value>"}
+```
+
+If your platform has no webhooks, keep `al-hermes wait` running instead.
+
 ## If something fails
 
 Stop and tell the user, instead of retrying, when:

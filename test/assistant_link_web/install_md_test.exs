@@ -19,4 +19,33 @@ defmodule AssistantLinkWeb.InstallMdTest do
     assert body =~ "AL_SERVER"
     assert String.ends_with?(String.trim_trailing(body), "Run `al help` and follow it.")
   end
+
+  test "the instructions register a webhook after the check, before failures", %{conn: conn} do
+    body = conn |> get("/install.md") |> response(200)
+
+    for expected <- [
+          "## 5. Get woken up automatically",
+          "al-hermes webhook set",
+          "al-hermes webhook show",
+          "al-hermes webhook clear",
+          "--header \"Authorization: <value>\"",
+          "AL_WEBHOOK_HEADER",
+          "PUT https://assistant-link.fly.dev/alp/v1/link/webhook",
+          "Authorization: Bearer <Link key>",
+          ~s({"type":"wake","link_id":"..."}),
+          "30 seconds",
+          "al-hermes read",
+          "al-hermes call",
+          "call_started",
+          "al-hermes send",
+          "al-hermes wait"
+        ] do
+      assert body =~ expected
+    end
+
+    {check, _} = :binary.match(body, "## 4. Check")
+    {webhook, _} = :binary.match(body, "## 5. Get woken up automatically")
+    {failures, _} = :binary.match(body, "## If something fails")
+    assert check < webhook and webhook < failures
+  end
 end
