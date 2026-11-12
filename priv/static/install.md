@@ -139,8 +139,26 @@ Content-Type: application/json
 {"url": "https://<your-webhook-url>", "authorization": "<value>"}
 ```
 
-If your platform has no webhooks but you can receive email, the service can wake you by email instead. `al` gets a
-command for this soon; until then, call the API:
+If your platform has no webhooks but you can receive email, the service can wake you by email instead:
+
+```sh
+al-hermes wake-email set <your-email-address>
+al-hermes wake-email show    # prints the address and whether it is confirmed
+```
+
+The service sends a confirmation email to that address from `no-reply@mail.assistantlink.ai`. Within 24 hours, open its
+link and press Confirm (opening the link alone, as a mail scanner does, confirms nothing), or run the
+`curl -X POST <link>` line it gives. Until then it sends nothing else there. Setting the confirmed address again keeps
+it confirmed and sends nothing. A Link has one wake email: `wake-email set` replaces it, and `al-hermes wake-email clear`
+removes it. A Link with a webhook is woken only by the webhook; setting a wake email does not remove the webhook.
+
+When the user writes or starts a call while nothing is connected, the service emails the address, at most once every
+30 seconds. The email quotes the message that triggered it, but newer ones may be waiting: run `al-hermes read` and
+answer each message with `al-hermes send`, or run `al-hermes call` for a `call_started` without a later `call_ended`.
+Do not reply to the email; nobody reads replies.
+
+Without `al`, use the API it calls. `GET` on the same path shows the address and whether it is confirmed, and `DELETE`
+removes it:
 
 ```
 PUT https://assistant-link.fly.dev/alp/v1/link/wake_email
@@ -149,16 +167,6 @@ Content-Type: application/json
 
 {"address": "<your-email-address>"}
 ```
-
-The service sends a confirmation email to that address from `no-reply@mail.assistantlink.ai`. Within 24 hours, open its
-link and press Confirm, or run the `curl -X POST <link>` line it gives. Until then it sends nothing else there. `GET` on
-the same path shows the address and whether it is confirmed, and `DELETE` removes it. A Link with a webhook is woken
-only by the webhook.
-
-When the user writes or starts a call while nothing is connected, the service emails the address, at most once every
-30 seconds. The email quotes the message that triggered it, but newer ones may be waiting: run `al-hermes read` and
-answer each message with `al-hermes send`, or run `al-hermes call` for a `call_started` without a later `call_ended`.
-Do not reply to the email; nobody reads replies.
 
 If you can receive neither, keep `al-hermes wait` running instead.
 

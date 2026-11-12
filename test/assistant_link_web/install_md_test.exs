@@ -58,6 +58,9 @@ defmodule AssistantLinkWeb.InstallMdTest do
     body = conn |> get("/install.md") |> response(200)
 
     for expected <- [
+          "al-hermes wake-email set <your-email-address>",
+          "al-hermes wake-email show",
+          "al-hermes wake-email clear",
           "PUT https://assistant-link.fly.dev/alp/v1/link/wake_email",
           ~s({"address": "<your-email-address>"}),
           "confirmation",
@@ -70,6 +73,8 @@ defmodule AssistantLinkWeb.InstallMdTest do
         ] do
       assert body =~ expected
     end
+
+    refute body =~ "until then, call the API"
 
     {webhook, _} = :binary.match(body, "## 5. Get woken up automatically")
     {email, _} = :binary.match(body, "/alp/v1/link/wake_email")
