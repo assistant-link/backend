@@ -2,19 +2,25 @@ defmodule AssistantLinkWeb.Webhook do
   @moduledoc """
   Wakes agents: posts `{"type": "wake", "link_id": ...}` to the webhook of each offline paired Link of the
   Assistant when the user sends a text message or starts a call, at most once per Link in 30 seconds.
+  A Link with no webhook but a confirmed wake email gets an email instead (see `AssistantLinkWeb.WakeEmail`).
   It is a best-effort signal; delivery over the agent connection stays the reliable path. Transport
   errors, 408, 429 and 5xx are retried up to 3 times.
   """
   alias AssistantLink.Accounts.Scope
   alias AssistantLink.Events.Event
   alias AssistantLink.Links
+  alias AssistantLinkWeb.WakeEmail
 
   require Logger
 
   @spec notify(Event.t()) :: :ok
   def notify(%Event{type: :call_ended}), do: :ok
 
-  def notify(%Event{} = event), do: event |> Links.claim_wake_links() |> ping()
+  def notify(%Event{} = event) do
+    {hooked, emailed} = event |> Links.claim_wake_links() |> Enum.split_with(& &1.webhook_url)
+    :ok = WakeEmail.send_wakes(emailed, event)
+    ping(hooked)
+  end
 
   @doc "Wakes the offline paired Links with a webhook of every Assistant of the scope's account."
   @spec wake_account(Scope.t()) :: :ok

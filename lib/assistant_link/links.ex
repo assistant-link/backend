@@ -188,21 +188,22 @@ defmodule AssistantLink.Links do
     :ok
   end
 
-  # The webhook flag lets Presence report the Link idle rather than offline when its last connection goes.
+  # The wakeable flag lets Presence report the Link idle rather than offline when its last connection goes.
   defp record_activity(%Link{id: id}) do
     now = DateTime.utc_now()
 
-    {_count, webhook} =
-      Repo.update_all(from(l in Link, where: l.id == ^id, select: not is_nil(l.webhook_url)),
+    {_count, wakeable} =
+      Repo.update_all(
+        from(l in Link, where: l.id == ^id, select: not is_nil(l.webhook_url) or not is_nil(l.wake_email_confirmed_at)),
         set: [last_active_at: now, webhook_pinged_at: nil]
       )
 
-    %{active_at: now, webhook: webhook == [true]}
+    %{active_at: now, wakeable: wakeable == [true]}
   end
 
   @doc """
-  `:online` while an agent connection is live, otherwise `:idle` when the Link has a webhook to wake it
-  and `:offline` when it has none.
+  `:online` while an agent connection is live, otherwise `:idle` when the Link has a webhook or a confirmed
+  wake email to wake it, and `:offline` when it has neither.
   """
   @spec status(Link.t()) :: Link.status()
   def status(%Link{paired_at: nil}), do: :not_paired
@@ -210,7 +211,7 @@ defmodule AssistantLink.Links do
   def status(%Link{id: id, account_id: account_id} = link) do
     cond do
       Presence.online?(account_id, id) -> :online
-      link.webhook_url -> :idle
+      link.webhook_url || link.wake_email_confirmed_at -> :idle
       true -> :offline
     end
   end
@@ -221,7 +222,7 @@ defmodule AssistantLink.Links do
   """
   @spec put_webhook(Link.t(), map()) :: {:ok, Link.t()} | {:error, Ecto.Changeset.t()}
   def put_webhook(%Link{} = link, params),
-    do: link |> Link.webhook_changeset(params) |> Repo.update() |> announce_webhook_change()
+    do: link |> Link.webhook_changeset(params) |> Repo.update() |> announce_wake_change()
 
   @doc "Removes the Link's webhook. The account's subscribers are told the Link is offline, unless it is online."
   @spec delete_webhook(Link.t()) :: {:ok, Link.t()}
@@ -229,16 +230,74 @@ defmodule AssistantLink.Links do
     link
     |> Ecto.Changeset.change(webhook_url: nil, webhook_authorization: nil)
     |> Repo.update()
-    |> announce_webhook_change()
+    |> announce_wake_change()
   end
 
-  defp announce_webhook_change({:ok, link} = result) do
+  @doc """
+  Sets or replaces the Link's wake email. See `Link.wake_email_changeset/2`. A new address wakes nothing
+  until `confirm_wake_email/2`. The account's subscribers are told the Link's status, unless it is online.
+  """
+  @spec put_wake_email(Link.t(), map()) :: {:ok, Link.t()} | {:error, Ecto.Changeset.t()}
+  def put_wake_email(%Link{} = link, params),
+    do: link |> Link.wake_email_changeset(params) |> Repo.update() |> announce_wake_change()
+
+  @doc "Removes the Link's wake email. The account's subscribers are told the Link's status, unless it is online."
+  @spec delete_wake_email(Link.t()) :: {:ok, Link.t()}
+  def delete_wake_email(%Link{} = link) do
+    link
+    |> Ecto.Changeset.change(wake_email: nil, wake_email_confirmed_at: nil)
+    |> Repo.update()
+    |> announce_wake_change()
+  end
+
+  @doc """
+  Confirms the wake email of a paired Link, if it is still `address`. Returns `{:error, :invalid}` for a
+  replaced or removed address, an unknown Link, or a Link of a deleted account. Confirming twice is fine.
+  """
+  @spec confirm_wake_email(Ecto.UUID.t(), String.t()) :: {:ok, Link.t()} | {:error, :invalid}
+  def confirm_wake_email(link_id, address) do
+    case get_link_by_wake_email(link_id, address) do
+      %Link{wake_email_confirmed_at: nil} = link ->
+        link
+        |> Ecto.Changeset.change(wake_email_confirmed_at: DateTime.utc_now())
+        |> Repo.update()
+        |> announce_wake_change()
+
+      %Link{} = link ->
+        {:ok, link}
+
+      nil ->
+        {:error, :invalid}
+    end
+  end
+
+  @doc """
+  Returns the paired Link with the id, if its wake email is still `address`, or `nil`. A Link of a deleted
+  account finds nothing.
+  """
+  @spec get_link_by_wake_email(Ecto.UUID.t(), String.t()) :: Link.t() | nil
+  def get_link_by_wake_email(link_id, address) when is_binary(address) do
+    Repo.one(
+      from l in Link,
+        join: a in Account,
+        on: a.id == l.account_id,
+        where: l.id == ^link_id and l.wake_email == ^address and not is_nil(l.paired_at) and is_nil(a.deleted_at)
+    )
+  end
+
+  @doc "The Link's wake email and whether it is confirmed, or `nil`."
+  @spec show_wake_email(Link.t()) :: %{address: String.t(), confirmed: boolean()} | nil
+  def show_wake_email(%Link{wake_email: nil}), do: nil
+
+  def show_wake_email(%Link{} = link), do: %{address: link.wake_email, confirmed: link.wake_email_confirmed_at != nil}
+
+  defp announce_wake_change({:ok, link} = result) do
     status = status(link)
     if status in [:idle, :offline], do: announce_status(link, status)
     result
   end
 
-  defp announce_webhook_change({:error, _changeset} = error), do: error
+  defp announce_wake_change({:error, _changeset} = error), do: error
 
   defp announce_status(link, status) do
     change = %{link_id: link.id, status: status, last_active_at: link.last_active_at}
@@ -263,20 +322,27 @@ defmodule AssistantLink.Links do
   end
 
   @doc """
-  The paired Links of the event's Assistant to ping with a wake-up: those with a webhook and no live
-  connection, unless the account was deleted. Each Link returned is marked as pinged now, and a Link
-  pinged less than 30 seconds ago is left out.
+  The paired Links of the event's Assistant to wake up, with their Assistant: those with a webhook or a
+  confirmed wake email and no live connection, unless the account was deleted. Each Link returned is
+  marked as pinged now, and a Link pinged less than 30 seconds ago is left out.
   """
   @spec claim_wake_links(Events.Event.t()) :: [Link.t()]
   def claim_wake_links(%Events.Event{} = event) do
-    claim_links(from(l in Link, where: l.assistant_id == ^event.assistant_id), event.account_id)
+    links =
+      from l in Link,
+        where: l.assistant_id == ^event.assistant_id,
+        where: not is_nil(l.webhook_url) or not is_nil(l.wake_email_confirmed_at)
+
+    claim_links(links, event.account_id)
   end
 
   @doc """
-  Like `claim_wake_links/1`, for every Assistant of the scope's account.
+  Like `claim_wake_links/1`, for every Assistant of the scope's account, but only Links with a webhook:
+  opening the app is no reason to send an email.
   """
   @spec claim_account_wake_links(Scope.t()) :: [Link.t()]
-  def claim_account_wake_links(%Scope{account: %{id: account_id}}), do: claim_links(Link, account_id)
+  def claim_account_wake_links(%Scope{account: %{id: account_id}}),
+    do: claim_links(from(l in Link, where: not is_nil(l.webhook_url)), account_id)
 
   defp claim_links(links, account_id) do
     candidates =
@@ -285,7 +351,8 @@ defmodule AssistantLink.Links do
           join: a in Account,
           on: a.id == l.account_id,
           where: l.account_id == ^account_id,
-          where: not is_nil(l.paired_at) and not is_nil(l.webhook_url) and is_nil(a.deleted_at)
+          where: not is_nil(l.paired_at) and is_nil(a.deleted_at),
+          preload: :assistant
       )
 
     Enum.filter(candidates, &(status(&1) == :idle and claim_wake(&1)))

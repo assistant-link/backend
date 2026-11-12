@@ -1,0 +1,17 @@
+<main class="flex min-h-screen items-center justify-center px-6">
+  <div class="max-w-md space-y-6 text-center">
+    <h1 class="text-2xl font-semibold">Confirm wake emails</h1>
+    <p>
+      Allow Assistant Link to wake an agent by email at <strong>{@address}</strong>
+      when the user writes to it or starts a call.
+    </p>
+    <form id="wake-email-confirm-form" method="post" action={~p"/wake-email/confirm/#{@token}"}>
+      <button
+        type="submit"
+        class="rounded-lg bg-zinc-900 px-5 py-2.5 font-semibold text-white transition hover:bg-zinc-700"
+      >
+        Confirm
+      </button>
+    </form>
+  </div>
+</main>

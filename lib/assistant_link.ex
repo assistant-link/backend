@@ -17,6 +17,8 @@ defmodule AssistantLink do
       Delivery,
       Events,
       Events.Event,
-      Links
+      Links,
+      Links.Link,
+      Links.WakeNotifier
     ]
 end
