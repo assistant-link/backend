@@ -10,7 +10,7 @@ defmodule AssistantLinkWeb.ALP.WakeEmailController do
 
   def update(conn, params) do
     with {:ok, link} <- Links.put_wake_email(conn.assigns.current_link, params) do
-      if link.wake_email_confirmed_at == nil, do: WakeEmail.send_confirmation(link)
+      if Links.claim_wake_email_confirmation(link), do: WakeEmail.send_confirmation(link)
       render(conn, :show, link: link)
     end
   end

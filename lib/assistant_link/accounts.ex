@@ -18,6 +18,7 @@ defmodule AssistantLink.Accounts do
   alias AssistantLink.Events.TextMessage
   alias AssistantLink.Links.Link
   alias AssistantLink.Links.PairingCode
+  alias AssistantLink.Links.WakeEmailConfirmation
   alias AssistantLink.Repo
   alias AssistantLink.Tokens
 
@@ -256,7 +257,7 @@ defmodule AssistantLink.Accounts do
     Enum.each(ids, &purge_account(&1, cutoff))
   end
 
-  @purged_children [TextMessage, Event, PairingCode, Link, Assistant, Device, Membership]
+  @purged_children [TextMessage, Event, PairingCode, WakeEmailConfirmation, Link, Assistant, Device, Membership]
 
   defp purge_account(account_id, cutoff) do
     Repo.transact(fn ->

@@ -9,12 +9,15 @@ defmodule AssistantLink.Links do
   alias AssistantLink.Events
   alias AssistantLink.Links.Link
   alias AssistantLink.Links.PairingCode
+  alias AssistantLink.Links.WakeEmailConfirmation
   alias AssistantLink.Presence
   alias AssistantLink.Repo
   alias AssistantLink.Tokens
 
   @pairing_code_ttl_minutes 15
   @pairing_code_attempts 3
+  @confirmation_cooldown_minutes 10
+  @confirmations_per_link_hourly 5
 
   @doc """
   Creates an unpaired Link for one of the scope's Assistants. Returns `{:error, :not_found}` for an
@@ -268,6 +271,49 @@ defmodule AssistantLink.Links do
 
       nil ->
         {:error, :invalid}
+    end
+  end
+
+  @doc """
+  Records that a confirmation email is being sent to the Link's unconfirmed wake email, and returns `true`,
+  unless that would send more than one email to the address every 10 minutes, or more than 5 for the
+  Link in an hour. Returns `false` for a confirmed or cleared address.
+  """
+  @spec claim_wake_email_confirmation(Link.t()) :: boolean()
+  def claim_wake_email_confirmation(%Link{wake_email: address, wake_email_confirmed_at: nil} = link)
+      when is_binary(address) do
+    {:ok, claimed} = Repo.transact(fn -> claim_confirmation_of_locked_link(link, address) end)
+    claimed
+  end
+
+  def claim_wake_email_confirmation(%Link{}), do: false
+
+  # The lock counts concurrent claims of one Link one at a time. Two Links claiming the same address at
+  # the same moment may both send, each within its own hourly cap.
+  defp claim_confirmation_of_locked_link(link, address) do
+    now = DateTime.utc_now()
+    hour_ago = DateTime.shift(now, hour: -1)
+    address_hash = Tokens.hash(String.downcase(address))
+    Repo.delete_all(from c in WakeEmailConfirmation, where: c.inserted_at <= ^hour_ago)
+    Repo.one!(from l in Link, where: l.id == ^link.id, select: l.id, lock: "FOR UPDATE")
+
+    cooling_down =
+      from c in WakeEmailConfirmation,
+        where: c.address_hash == ^address_hash,
+        where: c.inserted_at > ^DateTime.shift(now, minute: -@confirmation_cooldown_minutes)
+
+    sent_by_link =
+      Repo.aggregate(
+        from(c in WakeEmailConfirmation, where: c.link_id == ^link.id and c.inserted_at > ^hour_ago),
+        :count
+      )
+
+    if sent_by_link < @confirmations_per_link_hourly and not Repo.exists?(cooling_down) do
+      confirmation = %WakeEmailConfirmation{account_id: link.account_id, link_id: link.id, address_hash: address_hash}
+      Repo.insert!(confirmation)
+      {:ok, true}
+    else
+      {:ok, false}
     end
   end
 
