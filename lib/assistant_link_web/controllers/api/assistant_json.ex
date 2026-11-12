@@ -13,9 +13,17 @@ defmodule AssistantLinkWeb.API.AssistantJSON do
       id: assistant.id,
       name: assistant.name,
       avatar: assistant.avatar,
-      status: if(Enum.any?(links, &(&1.status == :online)), do: :online, else: :offline),
+      status: status(links),
       links: links,
       latest_event: assistant.latest_event && EventJSON.event(assistant.latest_event)
     }
+  end
+
+  defp status(links) do
+    cond do
+      Enum.any?(links, &(&1.status == :online)) -> :online
+      Enum.any?(links, &(&1.status == :idle)) -> :idle
+      true -> :offline
+    end
   end
 end

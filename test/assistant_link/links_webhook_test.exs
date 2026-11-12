@@ -27,6 +27,39 @@ defmodule AssistantLink.LinksWebhookTest do
     assert {:ok, _link} = Links.delete_webhook(link)
   end
 
+  test "tells the account's subscribers the Link is idle when the webhook is set, offline when cleared", %{
+    link: link
+  } do
+    :ok = Accounts.subscribe(link.account_id)
+    link_id = link.id
+
+    {:ok, link} = Links.put_webhook(link, %{"url" => "https://a.test/hook"})
+    assert Links.status(link) == :idle
+    assert_received {:link_status, %{link_id: ^link_id, status: :idle, last_active_at: nil}}
+
+    {:ok, link} = Links.delete_webhook(link)
+    assert Links.status(link) == :offline
+    assert_received {:link_status, %{link_id: ^link_id, status: :offline, last_active_at: nil}}
+  end
+
+  test "keeps a connected Link online and tells no one when its webhook changes", %{link: link} do
+    :ok = Accounts.subscribe(link.account_id)
+    :ok = Links.connect(link)
+    assert_receive {:link_status, %{status: :online}}
+
+    {:ok, link} = Links.put_webhook(link, %{"url" => "https://a.test/hook"})
+    assert Links.status(link) == :online
+    {:ok, _link} = Links.delete_webhook(link)
+
+    refute_received {:link_status, _change}
+  end
+
+  test "tells no one when the webhook is rejected", %{link: link} do
+    :ok = Accounts.subscribe(link.account_id)
+    assert {:error, _changeset} = Links.put_webhook(link, %{"url" => "ftp://a.test"})
+    refute_received {:link_status, _change}
+  end
+
   test "masks an authorization without a space completely", %{link: link} do
     {:ok, link} = Links.put_webhook(link, %{"url" => "https://a.test", "authorization" => "secret"})
     assert Links.show_webhook(link).authorization == "***"

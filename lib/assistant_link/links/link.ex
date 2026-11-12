@@ -8,7 +8,7 @@ defmodule AssistantLink.Links.Link do
   import Ecto.Changeset
 
   @type t :: %__MODULE__{}
-  @type status :: :not_paired | :online | :offline
+  @type status :: :not_paired | :online | :idle | :offline
 
   schema "assistant_links" do
     field :label, :string

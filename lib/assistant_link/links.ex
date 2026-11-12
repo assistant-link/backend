@@ -129,8 +129,7 @@ defmodule AssistantLink.Links do
 
   # After the commit, so a subscriber that reads the Link on the message sees it paired.
   defp announce_paired({:ok, %{link: link}} = paired) do
-    change = %{link_id: link.id, status: :offline, last_active_at: link.last_active_at}
-    Phoenix.PubSub.broadcast(AssistantLink.PubSub, Accounts.topic(link.account_id), {:link_status, change})
+    announce_status(link, :offline)
     paired
   end
 
@@ -178,36 +177,73 @@ defmodule AssistantLink.Links do
   """
   @spec connect(Link.t()) :: :ok
   def connect(%Link{paired_at: %DateTime{}} = link) do
-    {:ok, _ref} = Presence.track(self(), Presence.topic(link.account_id), link.id, %{active_at: record_activity(link)})
+    {:ok, _ref} = Presence.track(self(), Presence.topic(link.account_id), link.id, record_activity(link))
     :ok
   end
 
   @doc "Records that the calling process's agent connection of the Link is closing now."
   @spec disconnect(Link.t()) :: :ok
   def disconnect(%Link{} = link) do
-    {:ok, _ref} = Presence.update(self(), Presence.topic(link.account_id), link.id, %{active_at: record_activity(link)})
+    {:ok, _ref} = Presence.update(self(), Presence.topic(link.account_id), link.id, record_activity(link))
     :ok
   end
 
+  # The webhook flag lets Presence report the Link idle rather than offline when its last connection goes.
   defp record_activity(%Link{id: id}) do
     now = DateTime.utc_now()
-    Repo.update_all(from(l in Link, where: l.id == ^id), set: [last_active_at: now, webhook_pinged_at: nil])
-    now
+
+    {_count, webhook} =
+      Repo.update_all(from(l in Link, where: l.id == ^id, select: not is_nil(l.webhook_url)),
+        set: [last_active_at: now, webhook_pinged_at: nil]
+      )
+
+    %{active_at: now, webhook: webhook == [true]}
   end
 
+  @doc """
+  `:online` while an agent connection is live, otherwise `:idle` when the Link has a webhook to wake it
+  and `:offline` when it has none.
+  """
   @spec status(Link.t()) :: Link.status()
   def status(%Link{paired_at: nil}), do: :not_paired
 
-  def status(%Link{id: id, account_id: account_id}),
-    do: if(Presence.online?(account_id, id), do: :online, else: :offline)
+  def status(%Link{id: id, account_id: account_id} = link) do
+    cond do
+      Presence.online?(account_id, id) -> :online
+      link.webhook_url -> :idle
+      true -> :offline
+    end
+  end
 
-  @doc "Sets or replaces the Link's webhook. See `Link.webhook_changeset/2`."
+  @doc """
+  Sets or replaces the Link's webhook. See `Link.webhook_changeset/2`. The account's subscribers are told
+  the Link is idle, unless it is online.
+  """
   @spec put_webhook(Link.t(), map()) :: {:ok, Link.t()} | {:error, Ecto.Changeset.t()}
-  def put_webhook(%Link{} = link, params), do: link |> Link.webhook_changeset(params) |> Repo.update()
+  def put_webhook(%Link{} = link, params),
+    do: link |> Link.webhook_changeset(params) |> Repo.update() |> announce_webhook_change()
 
+  @doc "Removes the Link's webhook. The account's subscribers are told the Link is offline, unless it is online."
   @spec delete_webhook(Link.t()) :: {:ok, Link.t()}
-  def delete_webhook(%Link{} = link),
-    do: link |> Ecto.Changeset.change(webhook_url: nil, webhook_authorization: nil) |> Repo.update()
+  def delete_webhook(%Link{} = link) do
+    link
+    |> Ecto.Changeset.change(webhook_url: nil, webhook_authorization: nil)
+    |> Repo.update()
+    |> announce_webhook_change()
+  end
+
+  defp announce_webhook_change({:ok, link} = result) do
+    status = status(link)
+    if status in [:idle, :offline], do: announce_status(link, status)
+    result
+  end
+
+  defp announce_webhook_change({:error, _changeset} = error), do: error
+
+  defp announce_status(link, status) do
+    change = %{link_id: link.id, status: status, last_active_at: link.last_active_at}
+    Phoenix.PubSub.broadcast(AssistantLink.PubSub, Accounts.topic(link.account_id), {:link_status, change})
+  end
 
   @doc """
   The Link's webhook with its authorization masked, or `nil`: the first word of a value with a space is
@@ -252,7 +288,7 @@ defmodule AssistantLink.Links do
           where: not is_nil(l.paired_at) and not is_nil(l.webhook_url) and is_nil(a.deleted_at)
       )
 
-    Enum.filter(candidates, &(status(&1) == :offline and claim_wake(&1)))
+    Enum.filter(candidates, &(status(&1) == :idle and claim_wake(&1)))
   end
 
   defp claim_wake(%Link{id: id}) do

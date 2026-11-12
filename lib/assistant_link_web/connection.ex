@@ -9,7 +9,7 @@ defmodule AssistantLinkWeb.Connection do
     it opened are acknowledged, it sends `connection.caught_up`, once. It sends the events that
     `AssistantLink.Delivery` hands it as `event.deliver` requests, numbered by its own counter, and
     reports the agent's answers back.
-  - An app connection sends its account's `link.status` changes (a Link that was just paired is `offline`), and `event.created` and `event.updated`
+  - An app connection sends its account's `link.status` changes (`online`, `idle` or `offline`; a Link that was just paired is `offline`), and `event.created` and `event.updated`
     with `{"event": event}` for its text messages.
 
   Both send `connection.closing` and close when their account is deleted. The service pings every

@@ -161,6 +161,30 @@ defmodule AssistantLinkWeb.API.AssistantControllerTest do
              ] == links
     end
 
+    test "a Link with a webhook and no connection is idle, and so is its Assistant", %{conn: conn, scope: scope} do
+      {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
+      idle = paired_link(scope, assistant, %{webhook_url: "https://a.test/hook"})
+      offline = paired_link(scope, assistant)
+
+      assert [%{"status" => "idle", "links" => links}] =
+               conn |> get(~p"/api/v1/assistants") |> json_response(200) |> Map.fetch!("assistants")
+
+      assert [%{"id" => idle.id, "status" => "idle"}, %{"id" => offline.id, "status" => "offline"}] ==
+               Enum.map(links, &Map.take(&1, ["id", "status"]))
+    end
+
+    test "a connected Link with a webhook is online", %{conn: conn, scope: scope} do
+      {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
+      online = paired_link(scope, assistant, %{webhook_url: "https://a.test/hook"})
+      _idle = paired_link(scope, assistant, %{webhook_url: "https://b.test/hook"})
+      :ok = Links.connect(online)
+
+      assert [%{"status" => "online", "links" => [%{"id" => id, "status" => "online"}, %{"status" => "idle"}]}] =
+               conn |> get(~p"/api/v1/assistants") |> json_response(200) |> Map.fetch!("assistants")
+
+      assert id == online.id
+    end
+
     test "requires an account credential" do
       assert json_response(get(build_conn(), ~p"/api/v1/assistants"), 401)["error"]["code"] == "unauthorized"
     end
