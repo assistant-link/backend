@@ -40,8 +40,20 @@ defmodule AssistantLinkWeb.ALP.WakeEmailControllerTest do
     assert email.subject =~ "Confirm"
     assert email.text_body =~ "Hermes"
     assert email.text_body =~ "24 hours"
-    assert email.text_body =~ "Do not reply to this email"
-    assert email.text_body =~ "curl -X POST"
+    assert email.text_body =~ "Link: #{link.id}"
+    assert email.text_body =~ "open the link below and press Confirm"
+    assert email.text_body =~ "Opening the link alone confirms nothing"
+    assert email.text_body =~ "If you did not expect this email, ignore it."
+    assert email.text_body =~ "Do not reply to this email: nobody reads the replies."
+    refute email.text_body =~ "curl"
+    refute email.text_body =~ "`"
+    refute email.text_body =~ ~r/\bal(-\w+)? (send|read|call|wait|pair|status|help)\b/
+
+    assert String.ends_with?(
+             String.trim_trailing(email.text_body),
+             "Not sure how to respond? Read the docs: #{AssistantLinkWeb.Endpoint.url()}/install.md"
+           )
+
     assert path =~ "/wake-email/confirm/"
 
     assert Links.status(Repo.reload!(link)) == :offline
