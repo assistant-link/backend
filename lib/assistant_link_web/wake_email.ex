@@ -21,13 +21,13 @@ defmodule AssistantLinkWeb.WakeEmail do
   @spec send_confirmation(Link.t()) :: :ok
   def send_confirmation(%Link{} = link) do
     url = url(~p"/wake-email/confirm/#{confirmation_token(link)}")
-    start(link, fn -> WakeNotifier.deliver_confirmation(link, url) end)
+    start(link, fn -> WakeNotifier.deliver_confirmation(link, url, docs_url()) end)
   end
 
   @doc "Wakes each Link, claimed with its Assistant, by email for the event."
   @spec send_wakes([Link.t()], Event.t()) :: :ok
   def send_wakes(links, %Event{} = event) do
-    Enum.each(links, fn link -> start(link, fn -> WakeNotifier.deliver_wake(link, event) end) end)
+    Enum.each(links, fn link -> start(link, fn -> WakeNotifier.deliver_wake(link, event, docs_url()) end) end)
   end
 
   @doc "A token that confirms the Link's current wake email. `opts` go to `Phoenix.Token.sign/4`."
@@ -54,6 +54,8 @@ defmodule AssistantLinkWeb.WakeEmail do
       {:error, _reason} -> {:error, :invalid}
     end
   end
+
+  defp docs_url, do: Endpoint.url() <> "/install.md"
 
   defp verify_token(token), do: Phoenix.Token.verify(Endpoint, @salt, token, max_age: @max_age)
 

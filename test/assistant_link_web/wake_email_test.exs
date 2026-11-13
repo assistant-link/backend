@@ -34,8 +34,33 @@ defmodule AssistantLinkWeb.WakeEmailTest do
     post(conn, ~p"/api/v1/assistants/#{assistant.id}/call_events", params)
   end
 
-  test "emails an offline Link a wake with the message text", %{conn: conn, link: link, assistant: assistant} do
-    conn |> post_message(assistant, "Can you book the table for 8?") |> json_response(201)
+  defp assert_minimal(body) do
+    refute body =~ ~r/\bal(-\w+)? (send|read|call|wait|pair|status|help)\b/
+    refute body =~ "curl"
+    refute body =~ "`"
+    assert body =~ "Do not reply to this email: nobody reads the replies."
+
+    assert String.ends_with?(
+             String.trim_trailing(body),
+             "Not sure how to respond? Read the docs: #{AssistantLinkWeb.Endpoint.url()}/install.md"
+           )
+  end
+
+  defp latest_event(assistant, type) do
+    Repo.one!(
+      from e in AssistantLink.Events.Event,
+        where: e.assistant_id == ^assistant.id and e.type == ^type,
+        order_by: [desc: e.seq],
+        limit: 1
+    )
+  end
+
+  test "emails an offline Link a wake with the facts and the quoted message", %{
+    conn: conn,
+    link: link,
+    assistant: assistant
+  } do
+    conn |> post_message(assistant, "Can you book the table for 8?\nOutside, please.") |> json_response(201)
 
     assert_receive {:email, email}, 1000
     assert email.to == [{"", "hermes@example.com"}]
@@ -43,29 +68,42 @@ defmodule AssistantLinkWeb.WakeEmailTest do
     assert email.subject =~ "Hermes"
     assert email.headers["Auto-Submitted"] == "auto-generated"
 
+    event = latest_event(assistant, :text_message)
+
     for expected <- [
-          "Can you book the table for 8?",
-          "Newer messages may have arrived",
-          "al read",
-          "al send",
-          "Do not reply to this email",
-          link.id
+          "Event: text_message",
+          "Event id: #{event.id}",
+          "Created at: #{DateTime.to_iso8601(event.inserted_at)}",
+          "Link: #{link.id}",
+          "> Can you book the table for 8?\n> Outside, please.",
+          "Newer messages may have arrived"
         ] do
       assert email.text_body =~ expected
     end
 
+    assert_minimal(email.text_body)
     refute_received {:webhook, _path}
   end
 
-  test "emails for call_started, telling the agent to join the call, but not for call_ended",
-       %{conn: conn, assistant: assistant} do
+  test "emails the facts for call_started, but nothing for call_ended", %{conn: conn, link: link, assistant: assistant} do
     post_call_event(conn, assistant, "call_ended")
     refute_receive {:email, _email}
 
     post_call_event(conn, assistant, "call_started")
     assert_receive {:email, email}, 1000
-    assert email.text_body =~ "al call"
-    assert email.text_body =~ "Do not reply to this email"
+    event = latest_event(assistant, :call_started)
+
+    for expected <- [
+          "Event: call_started",
+          "Event id: #{event.id}",
+          "Created at: #{DateTime.to_iso8601(event.inserted_at)}",
+          "Link: #{link.id}"
+        ] do
+      assert email.text_body =~ expected
+    end
+
+    refute email.text_body =~ ">"
+    assert_minimal(email.text_body)
   end
 
   test "emails a burst once, and again after the debounce", %{conn: conn, link: link, assistant: assistant} do

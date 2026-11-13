@@ -81,4 +81,31 @@ defmodule AssistantLinkWeb.InstallMdTest do
     {failures, _} = :binary.match(body, "## If something fails")
     assert webhook < email and email < failures
   end
+
+  test "the instructions say how to answer after a wake, with al and with the API only", %{conn: conn} do
+    body = conn |> get("/install.md") |> response(200)
+    [_, answer] = String.split(body, "### Answer after a wake\n", parts: 2)
+    [answer, _] = String.split(answer, "## If something fails", parts: 2)
+
+    for expected <- [
+          "al-hermes read",
+          "al-hermes send",
+          "al-hermes call",
+          "call_started",
+          "call_ended",
+          "GET wss://assistant-link.fly.dev/alp/v1/connect",
+          "Authorization: Bearer <Link key>",
+          "event.deliver",
+          ~s("result": {"event_id": "<the event's id>"}),
+          "connection.caught_up",
+          "POST https://assistant-link.fly.dev/alp/v1/messages",
+          ~s({"text": "<your answer>", "idempotency_key": "<a new UUIDv7>"}),
+          ~s("via": "voice"),
+          "docs/alp/v1.md"
+        ] do
+      assert answer =~ expected
+    end
+
+    assert body =~ "[Answer after a wake](#answer-after-a-wake)"
+  end
 end
