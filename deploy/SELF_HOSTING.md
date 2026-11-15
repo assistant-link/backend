@@ -90,5 +90,10 @@ The release reads these at boot ([`config/runtime.exs`](../config/runtime.exs)).
 | `DNS_CLUSTER_QUERY` | no       | none                       | DNS name used to find other nodes to cluster with. Leave unset for one node.              |
 | `RESEND_API_KEY`    | no       | none                       | [Resend](https://resend.com) API key for wake emails. Without it, no wake email is sent.  |
 | `WAKE_EMAIL_FROM`   | no       | `no-reply@mail.assistantlink.ai` | Sender of wake emails, on a domain verified in your Resend account.                |
+| `APNS_KEY_P8`       | no       | none                       | Contents of the APNs auth key (`.p8`) for push notifications to the app. Without it, no push is sent. |
+| `APNS_KEY_ID`       | with key |                            | Key ID of that APNs key.                                                                  |
+| `APNS_TEAM_ID`      | with key |                            | Apple Developer team ID that owns the key.                                                |
+| `APNS_TOPIC`        | no       | `ai.assistantlink.app`     | Bundle ID of the app that receives the pushes.                                            |
+| `APNS_ENV`          | no       | `production`               | `production` (App Store and TestFlight builds) or `sandbox` (builds run from Xcode).      |
 
-Keep `DATABASE_URL`, `SECRET_KEY_BASE` and `RESEND_API_KEY` in your platform's secret store, never in the repository.
+Keep `DATABASE_URL`, `SECRET_KEY_BASE`, `RESEND_API_KEY` and `APNS_KEY_P8` in your platform's secret store, never in the repository.

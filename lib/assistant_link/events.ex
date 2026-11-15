@@ -154,6 +154,19 @@ defmodule AssistantLink.Events do
     end
   end
 
+  @doc "Whether the Assistant's last call event is a `call_started`."
+  @spec on_call?(Ecto.UUID.t()) :: boolean()
+  def on_call?(assistant_id) do
+    last_call_event =
+      from e in Event,
+        where: e.assistant_id == ^assistant_id and e.type in [:call_started, :call_ended],
+        order_by: [desc: e.seq],
+        limit: 1,
+        select: e.type
+
+    Repo.one(last_call_event) == :call_started
+  end
+
   @doc """
   Stores an agent's text message as its Link's Assistant. Params are `"text"` and an optional
   `"idempotency_key"` (a UUIDv7) that only the same Link and text can repeat. Otherwise it works like

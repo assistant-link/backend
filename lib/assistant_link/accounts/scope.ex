@@ -17,13 +17,15 @@ defmodule AssistantLink.Accounts.Scope do
   """
 
   alias AssistantLink.Accounts.Account
+  alias AssistantLink.Accounts.Device
   alias AssistantLink.Accounts.User
 
   @typedoc """
   A user acting in one of their accounts. Data is scoped by `scope.account.id`. Get one from
-  `AssistantLink.Accounts`, which builds it only from a membership.
+  `AssistantLink.Accounts`, which builds it only from a membership. `device` is the app install acting,
+  `nil` for a web session.
   """
-  @type t :: %__MODULE__{user: User.t(), account: Account.t()}
+  @type t :: %__MODULE__{user: User.t(), account: Account.t(), device: Device.t() | nil}
 
-  defstruct user: nil, account: nil
+  defstruct user: nil, account: nil, device: nil
 end

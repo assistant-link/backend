@@ -40,7 +40,7 @@ defmodule AssistantLink.Accounts do
     case Repo.one(query) do
       {device, user, account} ->
         touch_device(device)
-        %Scope{user: user, account: account}
+        %Scope{user: user, account: account, device: device}
 
       nil ->
         nil
@@ -55,6 +55,44 @@ defmodule AssistantLink.Accounts do
     if is_nil(last_seen_at) or DateTime.diff(now, last_seen_at) >= @last_seen_resolution_seconds do
       Repo.update_all(from(d in Device, where: d.id == ^id), set: [last_seen_at: now])
     end
+  end
+
+  @doc """
+  Stores the APNs device token of the scope's device, in lowercase, replacing its previous one. A token
+  another device had moves to this one. Returns `{:error, :invalid_params}` unless it is 1 to 200 hex digits.
+  """
+  @spec put_push_token(Scope.t(), term()) :: :ok | {:error, :invalid_params}
+  def put_push_token(%Scope{device: %Device{id: id}}, token) when is_binary(token) do
+    if token =~ ~r/\A[0-9a-f]{1,200}\z/i do
+      token = String.downcase(token)
+      Repo.update_all(from(d in Device, where: d.push_token == ^token and d.id != ^id), set: [push_token: nil])
+      Repo.update_all(from(d in Device, where: d.id == ^id), set: [push_token: token])
+      :ok
+    else
+      {:error, :invalid_params}
+    end
+  end
+
+  def put_push_token(%Scope{}, _token), do: {:error, :invalid_params}
+
+  @doc "Removes the APNs device token of the scope's device, if it has one."
+  @spec delete_push_token(Scope.t()) :: :ok
+  def delete_push_token(%Scope{device: %Device{id: id}}) do
+    Repo.update_all(from(d in Device, where: d.id == ^id), set: [push_token: nil])
+    :ok
+  end
+
+  @doc "Removes an APNs device token from whichever device has it."
+  @spec drop_push_token(String.t()) :: :ok
+  def drop_push_token(token) when is_binary(token) do
+    Repo.update_all(from(d in Device, where: d.push_token == ^token), set: [push_token: nil])
+    :ok
+  end
+
+  @doc "The APNs device tokens of the account's devices."
+  @spec list_push_tokens(Ecto.UUID.t()) :: [String.t()]
+  def list_push_tokens(account_id) do
+    Repo.all(from d in Device, where: d.account_id == ^account_id and not is_nil(d.push_token), select: d.push_token)
   end
 
   @doc """
