@@ -139,6 +139,19 @@ defmodule AssistantLink.PushTest do
     assert_receive {:apns_request, _pid, _url, _headers, _body}, 1000
   end
 
+  test "pushes again once a call_started without call_ended is over an hour old",
+       %{agent: agent, scope: scope, assistant: assistant} do
+    {:ok, event, :created} = call_event(scope, assistant, "call_started")
+    stale_at = DateTime.shift(DateTime.utc_now(), minute: -61)
+
+    post_agent_message(agent, "Spoken already")
+    refute_receive {:apns_request, _pid, _url, _headers, _body}
+
+    event |> Ecto.Changeset.change(inserted_at: stale_at) |> Repo.update!()
+    post_agent_message(agent, "The call never ended")
+    assert_receive {:apns_request, _pid, _url, _headers, _body}, 1000
+  end
+
   test "does not push when no device registered a token", %{agent: agent, scope: scope} do
     :ok = Accounts.delete_push_token(scope)
     post_agent_message(agent, "Hi")

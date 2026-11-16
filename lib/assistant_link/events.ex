@@ -19,6 +19,8 @@ defmodule AssistantLink.Events do
 
   @default_limit 50
   @max_limit 100
+  # A `call_started` older than this counts as a call whose `call_ended` never arrived.
+  @call_window_minutes 60
 
   @doc "Stores the `link_created` event of a new Link. Call it in the transaction that creates the Link."
   @spec create_link_created(Link.t()) :: {:ok, Event.t()} | {:error, Ecto.Changeset.t()}
@@ -154,7 +156,7 @@ defmodule AssistantLink.Events do
     end
   end
 
-  @doc "Whether the Assistant's last call event is a `call_started`."
+  @doc "Whether the Assistant's last call event is a `call_started` from the last #{@call_window_minutes} minutes."
   @spec on_call?(Ecto.UUID.t()) :: boolean()
   def on_call?(assistant_id) do
     last_call_event =
@@ -162,9 +164,9 @@ defmodule AssistantLink.Events do
         where: e.assistant_id == ^assistant_id and e.type in [:call_started, :call_ended],
         order_by: [desc: e.seq],
         limit: 1,
-        select: e.type
+        select: {e.type, e.inserted_at > ago(@call_window_minutes, "minute")}
 
-    Repo.one(last_call_event) == :call_started
+    Repo.one(last_call_event) == {:call_started, true}
   end
 
   @doc """
