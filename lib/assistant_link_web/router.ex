@@ -78,6 +78,8 @@ defmodule AssistantLinkWeb.Router do
     post "/assistants/:assistant_id/messages", MessageController, :create
     post "/assistants/:assistant_id/call_events", CallEventController, :create
     post "/wake", WakeController, :create
+    put "/device/push_token", PushTokenController, :update
+    delete "/device/push_token", PushTokenController, :delete
     post "/links/:link_id/pairing_code", PairingCodeController, :create
   end
 

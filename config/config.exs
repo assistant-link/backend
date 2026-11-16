@@ -14,6 +14,13 @@ config :assistant_link, AssistantLink.Links.WakeNotifier, from: "no-reply@mail.a
 # For production it's recommended to configure a different adapter
 # at the `config/runtime.exs`.
 config :assistant_link, AssistantLink.Mailer, adapter: Swoosh.Adapters.Local
+
+# Without `key_p8`, pushes are only logged. config/runtime.exs reads the key from APNS_* variables.
+config :assistant_link, AssistantLink.Push,
+  client: AssistantLink.Push.FinchClient,
+  topic: "ai.assistantlink.app",
+  env: :production
+
 config :assistant_link, AssistantLinkWeb.Connection, ping_interval: 25_000, timeout: 60_000
 
 config :assistant_link, AssistantLinkWeb.Endpoint,

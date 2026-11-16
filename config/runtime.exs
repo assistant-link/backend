@@ -22,6 +22,23 @@ end
 
 config :assistant_link, AssistantLinkWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# APNs token auth. Without APNS_KEY_P8, pushes are only logged. A single-line key may use `\n` for line breaks.
+if config_env() != :test and System.get_env("APNS_KEY_P8") not in [nil, ""] do
+  apns_env =
+    case System.get_env("APNS_ENV", "production") do
+      "production" -> :production
+      "sandbox" -> :sandbox
+      other -> raise "APNS_ENV must be production or sandbox, got: #{inspect(other)}"
+    end
+
+  config :assistant_link, AssistantLink.Push,
+    key_p8: String.replace(System.fetch_env!("APNS_KEY_P8"), "\\n", "\n"),
+    key_id: System.fetch_env!("APNS_KEY_ID"),
+    team_id: System.fetch_env!("APNS_TEAM_ID"),
+    topic: System.get_env("APNS_TOPIC", "ai.assistantlink.app"),
+    env: apns_env
+end
+
 if config_env() == :dev do
   config :assistant_link, AssistantLinkWeb.Endpoint,
     live_reload: [

@@ -17,7 +17,9 @@ defmodule AssistantLink.Application do
       AssistantLink.Presence,
       {Registry, keys: :unique, name: AssistantLink.Delivery.Registry},
       {DynamicSupervisor, name: AssistantLink.Delivery.Supervisor, strategy: :one_for_one},
-      {Task.Supervisor, name: AssistantLinkWeb.Webhook.Supervisor}
+      {Task.Supervisor, name: AssistantLinkWeb.Webhook.Supervisor},
+      {Finch, name: AssistantLink.Push.Finch, pools: %{default: [protocols: [:http2]]}},
+      {Task.Supervisor, name: AssistantLink.Push.Supervisor}
     ]
 
     children =
