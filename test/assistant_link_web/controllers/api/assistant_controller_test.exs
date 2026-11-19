@@ -155,9 +155,16 @@ defmodule AssistantLinkWeb.API.AssistantControllerTest do
                  "id" => offline.id,
                  "label" => nil,
                  "status" => "offline",
-                 "last_active_at" => "2026-10-05T12:00:00.000000Z"
+                 "last_active_at" => "2026-10-05T12:00:00.000000Z",
+                 "activity" => nil
                },
-               %{"id" => unpaired.id, "label" => "spare", "status" => "not_paired", "last_active_at" => nil}
+               %{
+                 "id" => unpaired.id,
+                 "label" => "spare",
+                 "status" => "not_paired",
+                 "last_active_at" => nil,
+                 "activity" => nil
+               }
              ] == links
     end
 

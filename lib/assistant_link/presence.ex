@@ -5,9 +5,11 @@ defmodule AssistantLink.Presence do
   while any of them is alive, on any node.
 
   Each connection's meta holds the time it last recorded as the Link's `last_active_at`, and whether the
-  Link could be woken then (a webhook or a confirmed wake email). When a Link comes online or its last
-  connection goes, the account's subscribers get `{:link_status, ...}` with that time, and `:idle` rather
-  than `:offline` for a Link that can be woken (see `AssistantLink.Accounts.subscribe/1`).
+  Link could be woken then (a webhook or a confirmed wake email), and the Link's activity, if any (see
+  `AssistantLink.Links.put_activity/2`). When a Link comes online or its last connection goes, the
+  account's subscribers get `{:link_status, ...}` with that time, and `:idle` rather than `:offline` for a
+  Link that can be woken (see `AssistantLink.Accounts.subscribe/1`). When the last connection goes,
+  they also get `{:link_activity, ...}` with no activity.
   """
   use Phoenix.Presence, otp_app: :assistant_link, pubsub_server: AssistantLink.PubSub
 
@@ -16,6 +18,14 @@ defmodule AssistantLink.Presence do
 
   @spec online?(Ecto.UUID.t(), Ecto.UUID.t()) :: boolean()
   def online?(account_id, link_id), do: get_by_key(topic(account_id), link_id) != []
+
+  @spec activity(Ecto.UUID.t(), Ecto.UUID.t()) :: String.t() | nil
+  def activity(account_id, link_id) do
+    case get_by_key(topic(account_id), link_id) do
+      %{metas: metas} -> Enum.find_value(metas, &Map.get(&1, :activity))
+      [] -> nil
+    end
+  end
 
   @impl Phoenix.Presence
   def init(_opts), do: {:ok, %{}}
@@ -29,15 +39,15 @@ defmodule AssistantLink.Presence do
 
     # Every node runs this callback for every diff, so each one notifies only its own subscribers.
     for change <- changes do
-      Phoenix.PubSub.local_broadcast(
-        AssistantLink.PubSub,
-        AssistantLink.Accounts.topic(account_id),
-        {:link_status, change}
-      )
+      notify(account_id, {:link_status, change})
+      if change.status != :online, do: notify(account_id, {:link_activity, %{link_id: change.link_id, activity: nil}})
     end
 
     {:ok, state}
   end
+
+  defp notify(account_id, message),
+    do: Phoenix.PubSub.local_broadcast(AssistantLink.PubSub, AssistantLink.Accounts.topic(account_id), message)
 
   defp changed_status(link_id, joins, leaves, presences) do
     connections = length(Map.get(presences, link_id, []))

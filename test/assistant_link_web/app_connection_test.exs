@@ -227,6 +227,100 @@ defmodule AssistantLinkWeb.AppConnectionTest do
     end
   end
 
+  describe "activity" do
+    setup %{app: app, scope: scope} do
+      {link, token} = paired_link_fixture(scope)
+      assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "offline"}}}}
+      %{link: link, token: token, agent: put_req_header(build_conn(), "authorization", "Bearer " <> token)}
+    end
+
+    defp connect_agent(%{app: app, port: port, token: token}) do
+      {:ok, agent} = open(port, "/alp/v1/connect", token)
+      assert_receive {:ws, ^agent, {:text, %{"method" => "connection.caught_up"}}}
+      assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "online"}}}}
+      agent
+    end
+
+    # The agent connection handles messages in order, so once it answers, it has taken the activity.
+    defp sync(agent) do
+      :ok = send_text(agent, Jason.encode!(%{jsonrpc: "2.0", id: "sync", method: "sync"}))
+      assert_receive {:ws, ^agent, {:text, %{"id" => "sync"}}}
+    end
+
+    defp set_activity(%{agent: conn, app: app, link: %{id: link_id}}, agent, text) do
+      assert conn |> put(~p"/alp/v1/link/activity", %{"text" => text}) |> json_response(200)
+
+      assert_receive {:ws, ^app,
+                      {:text,
+                       %{
+                         "jsonrpc" => "2.0",
+                         "method" => "link.activity",
+                         "params" => %{"link_id" => ^link_id, "activity" => ^text}
+                       }}}
+
+      sync(agent)
+    end
+
+    defp assert_cleared(%{app: app, link: %{id: link_id}}) do
+      assert_receive {:ws, ^app,
+                      {:text, %{"method" => "link.activity", "params" => %{"link_id" => ^link_id, "activity" => nil}}}}
+    end
+
+    test "sends link.activity when the agent sets and clears it, and lists it with the Link", context do
+      agent = connect_agent(context)
+
+      set_activity(context, agent, "Searching the code…")
+      assert [%{"activity" => "Searching the code…"}] = listed_links(context)
+
+      assert context.agent |> delete(~p"/alp/v1/link/activity") |> response(204)
+      assert_cleared(context)
+      sync(agent)
+      assert [%{"activity" => nil}] = listed_links(context)
+
+      :ok = close(agent)
+    end
+
+    test "clears it when the agent sends a message", context do
+      agent = connect_agent(context)
+      set_activity(context, agent, "Typing…")
+
+      assert context.agent |> post(~p"/alp/v1/messages", %{"text" => "Done."}) |> json_response(201)
+
+      assert_cleared(context)
+      sync(agent)
+      assert Links.activity(context.link) == nil
+      :ok = close(agent)
+    end
+
+    test "keeps it while a connection stays, and clears it when the last one closes", %{app: app} = context do
+      first = connect_agent(context)
+      set_activity(context, first, "Filing an issue…")
+      {:ok, second} = open(context.port, "/alp/v1/connect", context.token)
+      assert_receive {:ws, ^second, {:text, %{"method" => "connection.caught_up"}}}
+
+      :ok = close(first)
+      refute_receive {:ws, ^app, {:text, %{"method" => "link.activity"}}}, 200
+      assert Links.activity(context.link) == "Filing an issue…"
+
+      :ok = close(second)
+      assert_receive {:ws, ^app, {:text, %{"method" => "link.status", "params" => %{"status" => "offline"}}}}
+      assert_cleared(context)
+      assert Links.activity(context.link) == nil
+      :ok = close(app)
+    end
+  end
+
+  defp listed_links(%{credential: credential}) do
+    [%{"links" => links}] =
+      build_conn()
+      |> put_req_header("authorization", "Bearer " <> credential)
+      |> get(~p"/api/v1/assistants")
+      |> json_response(200)
+      |> Map.fetch!("assistants")
+
+    links
+  end
+
   test "answers unknown methods and malformed frames with JSON-RPC errors", %{app: app} do
     :ok = send_text(app, Jason.encode!(%{jsonrpc: "2.0", id: "a1", method: "assistants.list"}))
     assert_receive {:ws, ^app, {:text, %{"id" => "a1", "error" => %{"code" => -32_601}}}}
