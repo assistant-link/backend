@@ -111,6 +111,8 @@ defmodule AssistantLinkWeb.Router do
     get "/link/wake_email", WakeEmailController, :show
     put "/link/wake_email", WakeEmailController, :update
     delete "/link/wake_email", WakeEmailController, :delete
+    put "/link/activity", ActivityController, :update
+    delete "/link/activity", ActivityController, :delete
     post "/messages", MessageController, :create
   end
 

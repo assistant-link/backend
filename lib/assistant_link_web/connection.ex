@@ -8,9 +8,10 @@ defmodule AssistantLinkWeb.Connection do
     when it opens and closes, and starts with `connection.ready`. Once the events that were waiting when
     it opened are acknowledged, it sends `connection.caught_up`, once. It sends the events that
     `AssistantLink.Delivery` hands it as `event.deliver` requests, numbered by its own counter, and
-    reports the agent's answers back.
+    reports the agent's answers back. It holds its Link's activity (`AssistantLink.Links.put_activity/2`).
   - An app connection sends its account's `link.status` changes (`online`, `idle` or `offline`; a Link that was just paired is `offline`), and `event.created` and `event.updated`
-    with `{"event": event}` for its text messages.
+    with `{"event": event}` for its text messages, and `link.activity` with `{"link_id": ..., "activity": ...}`
+    when a Link's activity is set or cleared.
 
   Both send `connection.closing` and close when their account is deleted. The service pings every
   `:ping_interval` ms, and the connection closes after `:timeout` ms without a frame from the client.
@@ -122,6 +123,16 @@ defmodule AssistantLinkWeb.Connection do
     do: {:push, text(JSONRPC.notification("link.status", link_status)), state}
 
   def handle_info({:link_status, _link_status}, state), do: {:ok, state}
+
+  def handle_info({:link_activity, change}, %{role: {:app, _account_id}} = state),
+    do: {:push, text(JSONRPC.notification("link.activity", change)), state}
+
+  def handle_info({:link_activity, %{link_id: id, activity: activity}}, %{role: {:agent, %{id: id} = link}} = state) do
+    :ok = Links.hold_activity(link, activity)
+    {:ok, state}
+  end
+
+  def handle_info({:link_activity, _change}, state), do: {:ok, state}
 
   def handle_info({notice, event}, %{role: {:app, _account_id}} = state)
       when notice in [:event_created, :event_updated],

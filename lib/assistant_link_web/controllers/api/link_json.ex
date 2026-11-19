@@ -8,7 +8,8 @@ defmodule AssistantLinkWeb.API.LinkJSON do
       id: link.id,
       label: link.label,
       status: Links.status(link),
-      last_active_at: link.last_active_at
+      last_active_at: link.last_active_at,
+      activity: Links.activity(link)
     }
   end
 end

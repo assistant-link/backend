@@ -18,6 +18,7 @@ defmodule AssistantLink.Links do
   @pairing_code_attempts 3
   @confirmation_cooldown_minutes 10
   @confirmations_per_link_hourly 5
+  @activity_max_length 60
 
   @doc """
   Creates an unpaired Link for one of the scope's Assistants. Returns `{:error, :not_found}` for an
@@ -180,8 +181,64 @@ defmodule AssistantLink.Links do
   """
   @spec connect(Link.t()) :: :ok
   def connect(%Link{paired_at: %DateTime{}} = link) do
-    {:ok, _ref} = Presence.track(self(), Presence.topic(link.account_id), link.id, record_activity(link))
+    meta = Map.put(record_activity(link), :activity, activity(link))
+    {:ok, _ref} = Presence.track(self(), Presence.topic(link.account_id), link.id, meta)
     :ok
+  end
+
+  @doc """
+  Sets what the Link's agent is doing, for the user to see while the Link is online: the text on one line,
+  trimmed, and cut to 60 code points ending in "…". Blank text clears it. The account's subscribers get
+  `{:link_activity, %{link_id: ..., activity: ...}}`, and the Link's agent connections hold it (see
+  `hold_activity/2`) until it is cleared, the agent sends a message, or the Link's last connection goes.
+
+  Returns `{:error, :not_connected}` for text while the Link has no agent connection.
+  """
+  @spec put_activity(Link.t(), String.t()) :: {:ok, String.t() | nil} | {:error, :not_connected}
+  def put_activity(%Link{} = link, text) when is_binary(text) do
+    case normalize_activity(text) do
+      "" ->
+        :ok = clear_activity(link)
+        {:ok, nil}
+
+      activity ->
+        if Presence.online?(link.account_id, link.id) do
+          :ok = announce_activity(link, activity)
+          {:ok, activity}
+        else
+          {:error, :not_connected}
+        end
+    end
+  end
+
+  @doc "Clears the Link's activity, as `put_activity/2` with blank text does."
+  @spec clear_activity(Link.t()) :: :ok
+  def clear_activity(%Link{} = link), do: announce_activity(link, nil)
+
+  @doc "The Link's activity while it is online, or `nil`."
+  @spec activity(Link.t()) :: String.t() | nil
+  def activity(%Link{} = link), do: Presence.activity(link.account_id, link.id)
+
+  @doc "Records the Link's activity in the calling process's agent connection, so it outlives the request."
+  @spec hold_activity(Link.t(), String.t() | nil) :: :ok
+  def hold_activity(%Link{} = link, activity) do
+    {:ok, _ref} = Presence.update(self(), Presence.topic(link.account_id), link.id, &Map.put(&1, :activity, activity))
+    :ok
+  end
+
+  # Broadcast even when this node sees no activity, as the Presence of another node may hold one it does not see yet.
+  defp announce_activity(link, activity) do
+    change = %{link_id: link.id, activity: activity}
+    Phoenix.PubSub.broadcast(AssistantLink.PubSub, Accounts.topic(link.account_id), {:link_activity, change})
+  end
+
+  defp normalize_activity(text) do
+    line = text |> String.replace(~r/[\p{Cc}\p{Zl}\p{Zp}]+/u, " ") |> String.trim()
+    codepoints = String.codepoints(line)
+
+    if length(codepoints) > @activity_max_length,
+      do: (codepoints |> Enum.take(@activity_max_length - 1) |> Enum.join() |> String.trim_trailing()) <> "…",
+      else: line
   end
 
   @doc "Records that the calling process's agent connection of the Link is closing now."
