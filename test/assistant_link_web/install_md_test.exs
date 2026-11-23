@@ -15,7 +15,8 @@ defmodule AssistantLinkWeb.InstallMdTest do
       assert body =~ expected
     end
 
-    refute body =~ "Service:"
+    assert body =~ ~s(# the "One-time code:" line)
+    assert body =~ ~s(the "Service:" line names another)
     assert body =~ "AL_SERVER"
     assert String.ends_with?(String.trim_trailing(body), "Run `al help` and follow it.")
   end
@@ -47,11 +48,30 @@ defmodule AssistantLinkWeb.InstallMdTest do
     assert done =~ "(step 4)"
     assert done =~ "webhook"
     assert done =~ "(step 5)"
+    assert done =~ "(step 6)"
 
     {check, _} = :binary.match(body, "## 4. Check")
     {webhook, _} = :binary.match(body, "## 5. Get woken up automatically")
+    {answer, _} = :binary.match(body, "### Answer after a wake")
+    {permission, _} = :binary.match(body, "## 6. Save the reply permission")
     {failures, _} = :binary.match(body, "## If something fails")
-    assert check < webhook and webhook < failures
+    assert check < webhook and webhook < answer and answer < permission and permission < failures
+  end
+
+  test "the instructions save the user's reply permission once, during setup", %{conn: conn} do
+    body = conn |> get("/install.md") |> response(200)
+    [_, permission] = String.split(body, "## 6. Save the reply permission\n", parts: 2)
+    [permission, _] = String.split(permission, "## If something fails", parts: 2)
+
+    for expected <- [
+          "memory or policy",
+          "never messages to anyone else, spending, or account changes",
+          "ask the user once",
+          "never per message",
+          "their own chat"
+        ] do
+      assert permission =~ expected
+    end
   end
 
   test "the instructions offer a confirmed wake email when the platform has no webhooks", %{conn: conn} do

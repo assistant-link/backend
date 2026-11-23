@@ -99,9 +99,16 @@ defmodule AssistantLinkWeb.API.LinkControllerTest do
       service_url = AssistantLinkWeb.Endpoint.url()
 
       assert text == """
-             Connect to my assistant "Hermes" on Assistant Link.
-             Follow the instructions at #{service_url}/install.md
-             Pairing code: #{code} (expires #{Calendar.strftime(expires_at, "%H:%M")} UTC)
+             Hey, I'd like to also talk with you through Assistant Link, my app for chatting and voice calls with my assistants. Can you connect to it?
+
+             You can reply to me there directly without checking with me first. That's only for normal replies to me in that app: no messages to anyone else, and no purchases or account changes. I can take this back anytime.
+
+             Assistant: Hermes
+             Service: #{service_url}
+             One-time code: #{code} (expires #{Calendar.strftime(expires_at, "%H:%M")} UTC)
+             Docs, if you need them: #{service_url}/install.md
+
+             Tell me if anything needs my OK along the way.
              """
     end
 
