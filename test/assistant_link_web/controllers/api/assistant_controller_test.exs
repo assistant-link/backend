@@ -91,6 +91,19 @@ defmodule AssistantLinkWeb.API.AssistantControllerTest do
                conn |> get(~p"/api/v1/assistants") |> json_response(200) |> Map.fetch!("assistants")
     end
 
+    test "carries each Assistant's platform, null until its agent sets one", %{conn: conn, scope: scope} do
+      {_link, token} = paired_link_fixture(scope, "Hermes")
+      {:ok, _} = Assistants.create_assistant(scope, %{"name" => "Muse", "avatar" => "avatar-2"})
+
+      assert build_conn()
+             |> put_req_header("authorization", "Bearer " <> token)
+             |> patch(~p"/alp/v1/assistant", %{"platform" => "hermes"})
+             |> json_response(200)
+
+      assert [%{"name" => "Hermes", "platform" => "hermes"}, %{"name" => "Muse", "platform" => nil}] =
+               conn |> get(~p"/api/v1/assistants") |> json_response(200) |> Map.fetch!("assistants")
+    end
+
     test "carries each Assistant's latest event of any type, null with no events", %{conn: conn, scope: scope} do
       {:ok, _empty} = Assistants.create_assistant(scope, %{"name" => "Empty", "avatar" => "avatar-1"})
       {:ok, only_link} = Assistants.create_assistant(scope, %{"name" => "Only", "avatar" => "avatar-2"})

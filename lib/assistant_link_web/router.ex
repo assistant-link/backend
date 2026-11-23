@@ -104,6 +104,8 @@ defmodule AssistantLinkWeb.Router do
   scope "/alp/v1", AssistantLinkWeb.ALP do
     pipe_through [:api, :require_link_token]
 
+    get "/assistant", AssistantController, :show
+    patch "/assistant", AssistantController, :update
     get "/link", LinkController, :show
     get "/link/webhook", WebhookController, :show
     put "/link/webhook", WebhookController, :update

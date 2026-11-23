@@ -321,6 +321,32 @@ defmodule AssistantLinkWeb.AppConnectionTest do
     links
   end
 
+  test "sends assistant.updated when the agent renames its Assistant or sets its platform", %{
+    app: app,
+    scope: scope,
+    port: port
+  } do
+    {link, token} = paired_link_fixture(scope)
+    assistant_id = link.assistant_id
+    {:ok, agent} = open(port, "/alp/v1/connect", token)
+    assert_receive {:ws, ^agent, {:text, %{"method" => "connection.caught_up"}}}
+
+    assert build_conn()
+           |> put_req_header("authorization", "Bearer " <> token)
+           |> patch(~p"/alp/v1/assistant", %{"name" => "Athena", "platform" => "Muse"})
+           |> json_response(200)
+
+    assert_receive {:ws, ^app, {:text, %{"jsonrpc" => "2.0", "method" => "assistant.updated"} = notice}}
+    refute Map.has_key?(notice, "id")
+    assert notice["params"] == %{"assistant" => %{"id" => assistant_id, "name" => "Athena", "platform" => "muse"}}
+
+    :ok = send_text(agent, Jason.encode!(%{jsonrpc: "2.0", id: "sync", method: "sync"}))
+    assert_receive {:ws, ^agent, {:text, %{"id" => "sync"}}}
+    refute_received {:ws, ^agent, {:text, %{"method" => "assistant.updated"}}}
+
+    for client <- [agent, app], do: :ok = close(client)
+  end
+
   test "answers unknown methods and malformed frames with JSON-RPC errors", %{app: app} do
     :ok = send_text(app, Jason.encode!(%{jsonrpc: "2.0", id: "a1", method: "assistants.list"}))
     assert_receive {:ws, ^app, {:text, %{"id" => "a1", "error" => %{"code" => -32_601}}}}
