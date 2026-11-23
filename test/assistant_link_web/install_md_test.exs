@@ -25,7 +25,7 @@ defmodule AssistantLinkWeb.InstallMdTest do
     body = conn |> get("/install.md") |> response(200)
 
     for expected <- [
-          "## 5. Get woken up automatically",
+          "## 6. Get woken up automatically",
           "al-hermes webhook set",
           "al-hermes webhook show",
           "al-hermes webhook clear",
@@ -45,23 +45,23 @@ defmodule AssistantLinkWeb.InstallMdTest do
     end
 
     [done] = Regex.run(~r/Done when [^.]*\./, body)
-    assert done =~ "(step 4)"
-    assert done =~ "webhook"
+    assert done =~ "(step 3)"
     assert done =~ "(step 5)"
+    assert done =~ "webhook"
     assert done =~ "(step 6)"
 
-    {check, _} = :binary.match(body, "## 4. Check")
-    {webhook, _} = :binary.match(body, "## 5. Get woken up automatically")
-    {answer, _} = :binary.match(body, "### Answer after a wake")
-    {permission, _} = :binary.match(body, "## 6. Save the reply permission")
+    {check, _} = :binary.match(body, "## 5. Check")
+    {webhook, _} = :binary.match(body, "## 6. Get woken up automatically")
     {failures, _} = :binary.match(body, "## If something fails")
-    assert check < webhook and webhook < answer and answer < permission and permission < failures
+    assert check < webhook and webhook < failures
   end
 
-  test "the instructions save the user's reply permission once, during setup", %{conn: conn} do
+  # Right after pairing: a later step can stall setup, and a registered webhook can wake the agent at once.
+  test "the instructions save the user's reply permission once, right after pairing", %{conn: conn} do
     body = conn |> get("/install.md") |> response(200)
-    [_, permission] = String.split(body, "## 6. Save the reply permission\n", parts: 2)
-    [permission, _] = String.split(permission, "## If something fails", parts: 2)
+    [_, permission] = String.split(body, "## 2. Pair\n", parts: 2)
+    [_, permission] = String.split(permission, "## 3. Save the reply permission\n", parts: 2)
+    [permission, _] = String.split(permission, "## 4. Store the key\n", parts: 2)
 
     for expected <- [
           "memory or policy",
@@ -96,7 +96,7 @@ defmodule AssistantLinkWeb.InstallMdTest do
 
     refute body =~ "until then, call the API"
 
-    {webhook, _} = :binary.match(body, "## 5. Get woken up automatically")
+    {webhook, _} = :binary.match(body, "## 6. Get woken up automatically")
     {email, _} = :binary.match(body, "/alp/v1/link/wake_email")
     {failures, _} = :binary.match(body, "## If something fails")
     assert webhook < email and email < failures

@@ -16,8 +16,8 @@ Docs, if you need them: https://assistant-link.fly.dev/install.md
 Tell me if anything needs my OK along the way.
 ```
 
-Done when `al-hermes status` exits 0 (step 4), if your platform supports webhooks or email, a webhook or a confirmed
-wake email is registered (step 5), and you have saved the reply permission (step 6). The
+Done when you have saved the reply permission (step 3), `al-hermes status` exits 0 (step 5), and, if your platform
+supports webhooks or email, a webhook or a confirmed wake email is registered (step 6). The
 commands below use `hermes`; replace it everywhere with this Assistant's name in lowercase. Each Assistant gets its own
 key and wrapper, so one host can serve several.
 
@@ -46,7 +46,7 @@ If `~/.local/bin` is not on your `PATH`, add it. With no binary for this host, b
 
 `al` pairs with `https://assistant-link.fly.dev` by default; set nothing. Only if the "Service:" line names another
 host (a self-hosted service), run `export AL_SERVER=<that host's URL>` first, and add the same line to the wrapper in
-step 3.
+step 4.
 
 ```sh
 mkdir -p -m 700 ~/.config/assistant-link
@@ -56,7 +56,14 @@ al pair K7QM-2XPA --key-file ~/.config/assistant-link/hermes.key   # the "One-ti
 `al` keeps nothing on the host. It writes the Link key to the file, readable only by you, and prints the Link id and
 Assistant name. Always use `--key-file`: without it `al pair` prints the key into your transcript.
 
-## 3. Store the key
+## 3. Save the reply permission
+
+Save the user's permission in your own memory or policy, so you answer in the app without asking the user each time.
+It covers replies to this user in the app only: never messages to anyone else, spending, or account changes. If the
+user's message did not grant it, ask the user once now, and never per message. The user takes it back by telling you
+so in their own chat with you.
+
+## 4. Store the key
 
 Use the first option that works, and never print the key. Each option also creates the wrapper `al-hermes`, which
 supplies the key to `al`.
@@ -106,7 +113,7 @@ instead of `exec al`.
 chmod 700 ~/.local/bin/al-hermes
 ```
 
-## 4. Check
+## 5. Check
 
 ```sh
 ~/.local/bin/al-hermes status
@@ -115,7 +122,7 @@ chmod 700 ~/.local/bin/al-hermes
 It exits 0 and prints one JSON object with the Assistant name, the Link id, and `"check": "accepted"`. From now on,
 run `al` through the wrapper (`al-hermes <command>`) wherever it needs the Link key.
 
-## 5. Get woken up automatically
+## 6. Get woken up automatically
 
 `al-hermes wait` hears the user only while it runs. If your platform supports incoming webhooks (a URL that wakes or
 triggers you), create a new webhook for this Link there and register its URL with the service:
@@ -208,13 +215,6 @@ Without `al`, use the API it calls, with `Authorization: Bearer <Link key>` on e
 
 The full protocol is the
 [Assistant Link Protocol](https://github.com/assistant-link/backend/blob/main/docs/alp/v1.md).
-
-## 6. Save the reply permission
-
-Save the user's permission in your own memory or policy, so you answer in the app without asking the user each time.
-It covers replies to this user in the app only: never messages to anyone else, spending, or account changes. If the
-user's message did not grant it, ask the user once now, before they send a test message, and never per message. The
-user takes it back by telling you so in their own chat with you.
 
 ## If something fails
 
