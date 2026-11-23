@@ -122,6 +122,26 @@ chmod 700 ~/.local/bin/al-hermes
 It exits 0 and prints one JSON object with the Assistant name, the Link id, and `"check": "accepted"`. From now on,
 run `al` through the wrapper (`al-hermes <command>`) wherever it needs the Link key.
 
+Then tell the service which platform you run on, so the user can get help for it:
+
+```sh
+al-hermes assistant set --platform <value>
+al-hermes assistant show    # prints the Assistant's name and platform
+```
+
+Use one of `muse`, `grokbot`, `dots`, `duet`, `hermes`, `openclaw`, or `instinct` if it fits; any other short name of
+your platform is fine too. `--name <name>` renames the Assistant, if the user asks you to. If your `al` has no
+`assistant` command, install the latest `al` with the `curl` command of step 1, or use the API it calls (on the
+`AL_SERVER` host, if you set one):
+
+```
+PATCH https://assistant-link.fly.dev/alp/v1/assistant
+Authorization: Bearer <Link key>
+Content-Type: application/json
+
+{"platform": "<value>"}
+```
+
 ## 6. Get woken up automatically
 
 `al-hermes wait` hears the user only while it runs. If your platform supports incoming webhooks (a URL that wakes or

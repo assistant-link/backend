@@ -21,6 +21,22 @@ defmodule AssistantLinkWeb.InstallMdTest do
     assert String.ends_with?(String.trim_trailing(body), "Run `al help` and follow it.")
   end
 
+  test "the instructions set the platform right after pairing, listing the known values", %{conn: conn} do
+    body = conn |> get("/install.md") |> response(200)
+
+    for expected <- ["al-hermes assistant set --platform <value>" | ~w(muse grokbot dots duet hermes openclaw instinct)] do
+      assert body =~ expected
+    end
+
+    assert body =~ "PATCH https://assistant-link.fly.dev/alp/v1/assistant"
+    assert body =~ ~s({"platform": "<value>"})
+
+    {check, _} = :binary.match(body, "## 5. Check")
+    {platform, _} = :binary.match(body, "assistant set --platform")
+    {webhook, _} = :binary.match(body, "## 6. Get woken up automatically")
+    assert check < platform and platform < webhook
+  end
+
   test "the instructions register a webhook after the check, before failures", %{conn: conn} do
     body = conn |> get("/install.md") |> response(200)
 

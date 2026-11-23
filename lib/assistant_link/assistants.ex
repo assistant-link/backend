@@ -2,6 +2,7 @@ defmodule AssistantLink.Assistants do
   @moduledoc false
   import Ecto.Query, warn: false
 
+  alias AssistantLink.Accounts
   alias AssistantLink.Accounts.Scope
   alias AssistantLink.Assistants.Assistant
   alias AssistantLink.Events.Event
@@ -52,4 +53,22 @@ defmodule AssistantLink.Assistants do
     |> Assistant.create_changeset(attrs)
     |> Repo.insert()
   end
+
+  @doc """
+  Updates an Assistant's `"name"` and `"platform"` as its agent asks. When either changes, the account's
+  subscribers get `{:assistant_updated, assistant}`.
+  """
+  @spec update_assistant(Assistant.t(), map()) :: {:ok, Assistant.t()} | {:error, Ecto.Changeset.t()}
+  def update_assistant(%Assistant{} = assistant, attrs) do
+    changeset = Assistant.update_changeset(assistant, attrs)
+
+    # The given Assistant may predate a concurrent update of its other field.
+    with {:ok, assistant} <- Repo.update(changeset, returning: true) do
+      if changeset.changes != %{}, do: broadcast(assistant.account_id, {:assistant_updated, assistant})
+      {:ok, assistant}
+    end
+  end
+
+  defp broadcast(account_id, message),
+    do: Phoenix.PubSub.broadcast(AssistantLink.PubSub, Accounts.topic(account_id), message)
 end

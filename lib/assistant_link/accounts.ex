@@ -221,6 +221,8 @@ defmodule AssistantLink.Accounts do
     has its webhook or wake email set, confirmed or removed while not connected
   - `{:event_created, event}` for each stored text message, and `{:event_updated, event}` when a user
     message is first delivered (see `AssistantLink.Events`)
+  - `{:assistant_updated, assistant}` when an Assistant's name or platform changes (see
+    `AssistantLink.Assistants.update_assistant/2`)
   - `:account_deleted` after the account was deleted
 
   Returns `{:error, :account_deleted}` for an account already deleted, whose subscribers get no

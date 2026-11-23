@@ -13,6 +13,7 @@ defmodule AssistantLinkWeb.API.AssistantJSON do
       id: assistant.id,
       name: assistant.name,
       avatar: assistant.avatar,
+      platform: assistant.platform,
       status: status(links),
       links: links,
       latest_event: assistant.latest_event && EventJSON.event(assistant.latest_event)
