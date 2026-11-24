@@ -4,6 +4,7 @@ defmodule AssistantLinkWeb.ALP.MessageControllerTest do
   import AssistantLink.LinksFixtures
 
   alias AssistantLink.Accounts
+  alias AssistantLink.Events
   alias AssistantLink.Events.Event
   alias AssistantLink.Events.TextMessage
   alias AssistantLink.Links
@@ -109,6 +110,43 @@ defmodule AssistantLinkWeb.ALP.MessageControllerTest do
       end
 
       assert stored_count() == 0
+    end
+
+    test "stores reply_to, also to a deleted message, without adding it to the response",
+         %{conn: conn, scope: scope, link: link} do
+      question = user_message_fixture(scope, %{id: link.assistant_id})
+      Repo.delete!(Repo.get!(TextMessage, question.id))
+
+      body = conn |> post_message(%{"text" => "Yes", "reply_to" => question.id}) |> json_response(201)
+
+      assert body |> Map.keys() |> Enum.sort() == ["created_at", "message_id"]
+      assert Repo.get!(Event, body["message_id"]).reply_to == question.id
+    end
+
+    test "answers 422 invalid_params for a reply_to that is not a text message of the Assistant",
+         %{conn: conn, scope: scope, link: link} do
+      {:ok, call, :created} =
+        Events.create_call_event(scope, link.assistant_id, %{
+          "type" => "call_started",
+          "idempotency_key" => key()
+        })
+
+      {other_link, _token} = paired_link_fixture(scope, "Grok")
+      other = user_message_fixture(scope, %{id: other_link.assistant_id})
+
+      for reply_to <- [call.id, other.id, Ecto.UUID.generate(), "first", 5] do
+        assert error_code(post_message(conn, %{"text" => "Yes", "reply_to" => reply_to}), 422) == "invalid_params"
+      end
+
+      assert stored_count() == 1
+    end
+
+    test "answers 409 for a key repeated with another reply_to", %{conn: conn, scope: scope, link: link} do
+      question = user_message_fixture(scope, %{id: link.assistant_id})
+      params = %{"text" => "Yes", "idempotency_key" => key(), "reply_to" => question.id}
+      assert json_response(post_message(conn, params), 201)
+
+      assert error_code(post_message(conn, Map.delete(params, "reply_to")), 409) == "idempotency_key_conflict"
     end
 
     test "answers 422 for a bad text and stores nothing", %{conn: conn} do

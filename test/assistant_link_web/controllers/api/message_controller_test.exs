@@ -184,6 +184,59 @@ defmodule AssistantLinkWeb.API.MessageControllerTest do
     end
   end
 
+  describe "reply_to" do
+    test "stores and renders the replied message's id, and omits the key without one",
+         %{conn: conn, assistant: assistant} do
+      %{"message" => question} = conn |> send_text(assistant, "Which one?") |> json_response(201)
+      refute Map.has_key?(question, "reply_to")
+
+      params = %{"text" => "The blue one", "idempotency_key" => key(), "reply_to" => question["id"]}
+      %{"message" => reply} = conn |> send_message(assistant.id, params) |> json_response(201)
+
+      assert reply["reply_to"] == question["id"]
+      assert Repo.get!(Event, reply["id"]).reply_to == question["id"]
+    end
+
+    test "is omitted when null", %{conn: conn, assistant: assistant} do
+      params = %{"text" => "Hi", "idempotency_key" => key(), "reply_to" => nil}
+
+      refute conn
+             |> send_message(assistant.id, params)
+             |> json_response(201)
+             |> Map.fetch!("message")
+             |> Map.has_key?("reply_to")
+    end
+
+    test "rejects a call event, an unknown or malformed id, and another Assistant's message with 422",
+         %{conn: conn, scope: scope, assistant: assistant} do
+      call_params = %{"type" => "call_started", "idempotency_key" => key()}
+
+      %{"event" => call} =
+        conn |> post(~p"/api/v1/assistants/#{assistant}/call_events", call_params) |> json_response(201)
+
+      {other_link, _token} = paired_link_fixture(scope, "Grok")
+      %{"message" => other} = conn |> send_text(%{id: other_link.assistant_id}, "Hi") |> json_response(201)
+
+      for reply_to <- [call["id"], other["id"], Ecto.UUID.generate(), "first"] do
+        params = %{"text" => "Yes", "idempotency_key" => key(), "reply_to" => reply_to}
+        assert error_code(send_message(conn, assistant.id, params), 422) == "invalid_params"
+      end
+
+      assert Repo.aggregate(TextMessage, :count) == 1
+    end
+
+    test "a repeated key with another reply_to gets 409", %{conn: conn, assistant: assistant} do
+      %{"message" => first} = conn |> send_text(assistant, "a") |> json_response(201)
+      %{"message" => second} = conn |> send_text(assistant, "b") |> json_response(201)
+      params = %{"text" => "Yes", "idempotency_key" => key(), "reply_to" => first["id"]}
+      created = conn |> send_message(assistant.id, params) |> json_response(201)
+
+      assert conn |> send_message(assistant.id, params) |> json_response(200) == created
+      conn = send_message(conn, assistant.id, %{params | "reply_to" => second["id"]})
+      assert error_code(conn, 409) == "idempotency_key_conflict"
+    end
+  end
+
   describe "check order" do
     test "404 comes before a bad text", %{conn: conn} do
       assert error_code(send_message(conn, Ecto.UUID.generate(), %{"text" => ""}), 404) == "not_found"

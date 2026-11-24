@@ -66,6 +66,18 @@ defmodule AssistantLinkWeb.API.EventControllerTest do
       refute Map.has_key?(second, "text_message")
     end
 
+    test "shows reply_to on a reply only", %{conn: conn, assistant: assistant} do
+      [%{"message" => question}] = send_texts(conn, assistant, ["Which one?"])
+      params = %{"text" => "Blue", "idempotency_key" => Ecto.UUID.generate(version: 7), "reply_to" => question["id"]}
+      conn |> post(~p"/api/v1/assistants/#{assistant}/messages", params) |> json_response(201)
+
+      assert %{"events" => [created, first, reply]} = json_response(list(conn, assistant.id), 200)
+
+      refute Map.has_key?(created, "reply_to")
+      refute Map.has_key?(first, "reply_to")
+      assert reply["reply_to"] == question["id"]
+    end
+
     test "rejects a bad before or limit with 422", %{conn: conn, assistant: assistant, scope: scope} do
       {other_link, _token} = paired_link_fixture(scope, "Grok")
       %{"events" => [%{"id" => other_event_id}]} = json_response(list(conn, other_link.assistant_id), 200)

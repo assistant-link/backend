@@ -99,6 +99,8 @@ defmodule AssistantLinkWeb.InstallMdTest do
       "al-hermes wait",
       "al-hermes read",
       "al-hermes send",
+      ~s("reply_to"),
+      "al-hermes send --reply-to",
       "al-hermes call",
       "### If `al` fails"
     ])
@@ -169,6 +171,7 @@ defmodule AssistantLinkWeb.InstallMdTest do
       "not that nothing newer",
       ~s(-X POST "$SERVICE/alp/v1/messages"),
       ~s({"text": "<your answer>", "idempotency_key": "<a new UUIDv7>"}),
+      ~s("reply_to": "<its id>"),
       "call_started",
       ~s("via": "voice"),
       "call_ended",

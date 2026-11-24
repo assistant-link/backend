@@ -4,6 +4,7 @@ defmodule AssistantLink.EventsMigrationTest do
 
   import AssistantLink.AccountsFixtures
 
+  alias AssistantLink.MigrationHelper
   alias Ecto.UUID
 
   @version 20_261_025_122_706
@@ -20,12 +21,18 @@ defmodule AssistantLink.EventsMigrationTest do
     Code.put_compiler_option(:ignore_module_conflict, true)
     [{module, _binary}] = Code.compile_file(@migration)
     Code.put_compiler_option(:ignore_module_conflict, ignore)
-    %{migration: module}
+    %{migration: module, reply_to: MigrationHelper.load("20261124080907_add_assistant_events_reply_to.exs")}
   end
 
   # Without the migration lock, which would hold the one shared sandbox connection the migration needs.
   defp migrate(module, direction) do
     Ecto.Migrator.run(Repo, [{@version, module}], direction, all: true, log: false, migration_lock: false)
+  end
+
+  # The reply_to key depends on the events table's unique index, so it goes first.
+  defp roll_back(%{migration: migration, reply_to: reply_to}) do
+    MigrationHelper.migrate(reply_to, :down)
+    migrate(migration, :down)
   end
 
   defp table_exists?(table), do: Repo.query!("SELECT to_regclass($1)", [table]).rows != [[nil]]
@@ -63,8 +70,8 @@ defmodule AssistantLink.EventsMigrationTest do
     ])
   end
 
-  test "rolls back and migrates again", %{migration: migration} do
-    migrate(migration, :down)
+  test "rolls back and migrates again", %{migration: migration} = context do
+    roll_back(context)
 
     refute table_exists?("assistant_events")
     refute table_exists?("text_messages")
@@ -79,10 +86,11 @@ defmodule AssistantLink.EventsMigrationTest do
     assert column_exists?("assistant_links", "last_read_seq")
   end
 
-  test "backfills a link_created event per Link, numbered per Assistant by (inserted_at, id)", %{migration: migration} do
+  test "backfills a link_created event per Link, numbered per Assistant by (inserted_at, id)",
+       %{migration: migration} = context do
     account = owned_account(user_fixture())
     other_account = owned_account(user_fixture())
-    migrate(migration, :down)
+    roll_back(context)
 
     assistant_id = insert_old_assistant(account)
     other_assistant_id = insert_old_assistant(other_account)

@@ -84,11 +84,12 @@ defmodule AssistantLink.Events do
 
   @doc """
   Stores a user's text message to one of the scope's Assistants. Params are `"text"`,
-  `"idempotency_key"` (a UUIDv7) and an optional `"via"`, `"voice"` for a transcribed utterance.
+  `"idempotency_key"` (a UUIDv7), an optional `"via"`, `"voice"` for a transcribed utterance, and an
+  optional `"reply_to"`, the id of a text message of the same Assistant, its payload deleted or not.
 
   A stored key returns its event as `{:ok, event, :existing}`, or `{:error, :idempotency_key_conflict}`
-  when the text or the Assistant differs. Checks run in this order: Assistant, stored key, text and
-  params, paired Link.
+  when the text, the `reply_to` or the Assistant differs. Checks run in this order: Assistant, stored
+  key, text and params, paired Link.
   """
   @spec create_text_message(Scope.t(), String.t(), map()) ::
           {:ok, Event.t(), :created | :existing}
@@ -204,9 +205,9 @@ defmodule AssistantLink.Events do
   end
 
   @doc """
-  Stores an agent's text message as its Link's Assistant. Params are `"text"` and an optional
-  `"idempotency_key"` (a UUIDv7) that only the same Link and text can repeat. Otherwise it works like
-  `create_text_message/3`, without the paired Link check.
+  Stores an agent's text message as its Link's Assistant. Params are `"text"`, an optional `"reply_to"`
+  and an optional `"idempotency_key"` (a UUIDv7) that only the same Link, text and `reply_to` can repeat.
+  Otherwise it works like `create_text_message/3`, without the paired Link check.
   """
   @spec create_assistant_message(Link.t(), map()) ::
           {:ok, Event.t(), :created | :existing}
@@ -221,7 +222,7 @@ defmodule AssistantLink.Events do
   # The event's sender, Assistant and Link are the message's identity for a repeated key.
   defp store(%Event{} = template, params) do
     case stored(template.account_id, params["idempotency_key"]) do
-      %Event{} = event -> replay(event, template, params["text"])
+      %Event{} = event -> replay(event, template, params)
       nil -> store_text_message(template, params)
     end
   end
@@ -245,13 +246,22 @@ defmodule AssistantLink.Events do
   defp cast_text_uuid(_id), do: :error
 
   # A deleted payload has no text to differ from.
-  defp replay(%Event{type: :text_message, text_message: stored_text} = event, template, text) do
-    if (is_nil(stored_text) or stored_text.text == text) and identity(event) == identity(template),
+  defp replay(%Event{type: :text_message, text_message: stored_text} = event, template, params) do
+    same_text? = is_nil(stored_text) or stored_text.text == params["text"]
+
+    if same_text? and event.reply_to == replied_id(params["reply_to"]) and identity(event) == identity(template),
       do: {:ok, event, :existing},
       else: {:error, :idempotency_key_conflict}
   end
 
-  defp replay(_event, _template, _text), do: {:error, :idempotency_key_conflict}
+  defp replay(_event, _template, _params), do: {:error, :idempotency_key_conflict}
+
+  defp replied_id(id) do
+    case cast_text_uuid(id) do
+      {:ok, uuid} -> uuid
+      :error -> id
+    end
+  end
 
   defp identity(event), do: {event.assistant_id, event.sender, event.link_id}
 
@@ -261,6 +271,7 @@ defmodule AssistantLink.Events do
     with :ok <- TextMessage.validate_text(text),
          {:ok, via} <- cast_via(template, params["via"]),
          {:ok, key} <- cast_key(template, params["idempotency_key"]),
+         {:ok, template} <- put_reply_to(template, params["reply_to"]),
          {:ok, event} <- Repo.transact(fn -> insert_text_message(template, text, via, key) end) do
       broadcast(event.account_id, {:event_created, event})
       {:ok, event, :created}
@@ -284,6 +295,21 @@ defmodule AssistantLink.Events do
       {:ok, uuid}
     else
       _not_uuid_v7 -> {:error, :invalid_params}
+    end
+  end
+
+  defp put_reply_to(template, nil), do: {:ok, template}
+
+  defp put_reply_to(template, id) do
+    with {:ok, uuid} <- cast_text_uuid(id),
+         true <-
+           Repo.exists?(
+             from e in Event,
+               where: e.id == ^uuid and e.assistant_id == ^template.assistant_id and e.type == :text_message
+           ) do
+      {:ok, %{template | reply_to: uuid}}
+    else
+      _not_a_message -> {:error, :invalid_params}
     end
   end
 
