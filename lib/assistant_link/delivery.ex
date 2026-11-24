@@ -13,7 +13,7 @@ defmodule AssistantLink.Delivery do
   A connection that joins gets `:caught_up` once every event that was deliverable at that moment has been
   acknowledged, at once when there was none.
 
-  The process runs again when a connection joins, when a user's event of its Assistant is stored,
+  The process runs again when a connection joins, when a deliverable event of its Assistant is stored,
   on each acknowledgement, and when the retry timer fires.
   """
   use GenServer, restart: :temporary
@@ -112,8 +112,9 @@ defmodule AssistantLink.Delivery do
     end
   end
 
-  def handle_info({:event_created, %Event{sender: :user, assistant_id: id}}, %{assistant_id: id} = state),
-    do: {:noreply, run(state)}
+  def handle_info({:event_created, %Event{assistant_id: id} = event}, %{assistant_id: id} = state) do
+    if Events.deliverable?(event), do: {:noreply, run(state)}, else: {:noreply, state}
+  end
 
   def handle_info(_other_notice, state), do: {:noreply, state}
 

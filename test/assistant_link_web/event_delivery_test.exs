@@ -86,6 +86,13 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
     settle(client, link)
   end
 
+  defp deliver_and_acknowledge(client, link, event) do
+    {id, %{"id" => event_id}} = receive_delivery(client)
+    assert event_id == event.id
+    acknowledge(client, id, event.id)
+    settle(client, link)
+  end
+
   defp retry_now(link), do: send(delivery(link), :retry)
 
   defp cursor(link), do: Repo.reload!(link).last_read_seq
@@ -172,6 +179,28 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
                "created_at" => DateTime.to_iso8601(event.inserted_at),
                "deleted" => false
              }
+    end
+
+    test "sends the agent's call_ended to every Link, the hanging-up one included, at once",
+         %{scope: scope, assistant: assistant, link: link} = context do
+      {link_two, token_two} = another_paired_link_fixture(scope, assistant)
+      {:ok, started, :created} = Events.create_call_event(scope, assistant.id, call_params("call_started"))
+      one = connect_agent(context)
+      two = connect_agent(context, token_two)
+      for {client, current} <- [{one, link}, {two, link_two}], do: deliver_and_acknowledge(client, current, started)
+
+      {:ok, ended, :created} = Events.hang_up(link, %{})
+
+      for {client, current} <- [{one, link}, {two, link_two}] do
+        assert {id, %{"id" => ended_id, "type" => "call_ended"}} = receive_delivery(client)
+        assert ended_id == ended.id
+        acknowledge(client, id, ended.id)
+        settle(client, current)
+        assert cursor(current) == ended.seq
+      end
+
+      assert Repo.get!(Event, ended.id).delivered_at == nil
+      refute_receive {:event_updated, %Event{type: :call_ended}}
     end
 
     test "sends an event without content when its text was deleted", %{scope: scope, assistant: assistant} = context do

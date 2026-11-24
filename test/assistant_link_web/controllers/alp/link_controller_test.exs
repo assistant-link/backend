@@ -51,6 +51,14 @@ defmodule AssistantLinkWeb.ALP.LinkControllerTest do
       assert unread_count(conn) == 1
     end
 
+    test "counts the agent's call_ended and the user's call events", %{conn: conn, scope: scope, link: link} do
+      params = %{"type" => "call_started", "idempotency_key" => Ecto.UUID.generate(version: 7)}
+      {:ok, _started, :created} = Events.create_call_event(scope, link.assistant_id, params)
+      {:ok, _ended, :created} = Events.hang_up(link, %{})
+
+      assert unread_count(conn) == 2
+    end
+
     test "answers 401 for a missing, unknown, or deleted account's token", %{conn: conn, scope: scope} do
       for header <- [nil, "Bearer alt_unknown"] do
         conn =
