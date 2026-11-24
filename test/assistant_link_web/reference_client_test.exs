@@ -31,9 +31,14 @@ defmodule AssistantLinkWeb.ReferenceClientTest do
 
   # Runs one step of the client and returns the JSON it prints. It must never print the token.
   defp run!(args, env \\ []) do
-    {output, 0} = System.cmd(node!(), [@client | args], env: env, stderr_to_stdout: true)
+    {0, output} = run(args, env)
+    output
+  end
+
+  defp run(args, env \\ []) do
+    {output, status} = System.cmd(node!(), [@client | args], env: env, stderr_to_stdout: true)
     refute output =~ "alt_"
-    Jason.decode!(output)
+    {status, Jason.decode!(output)}
   end
 
   defp node!, do: System.find_executable("node") || flunk("Node.js 22 or later must be installed")
@@ -104,5 +109,28 @@ defmodule AssistantLinkWeb.ReferenceClientTest do
       |> Enum.map(& &1["text_message"]["text"])
 
     assert Enum.sort(replies) == ["You said: Hi", "You said: What time is it?"]
+  end
+
+  @tag :tmp_dir
+  test "pairing into a store file that exists fails before the code is used", context do
+    %{port: port, code: code, tmp_dir: dir} = context
+    service = "http://localhost:#{port}"
+    taken = Path.join(dir, "taken.json")
+    File.write!(taken, "another Link")
+
+    assert {1, %{"error" => %{"store" => "EEXIST"}}} = run(["pair", service, code, taken])
+    assert File.read!(taken) == "another Link"
+    assert %{"assistant_name" => "Hermes"} = run!(["pair", service, code, Path.join(dir, "hermes.json")])
+  end
+
+  @tag :tmp_dir
+  test "a failed pairing leaves no store file behind", context do
+    %{port: port, code: code, tmp_dir: dir} = context
+    service = "http://localhost:#{port}"
+    store = Path.join(dir, "hermes.json")
+    run!(["pair", service, code, Path.join(dir, "first.json")])
+
+    assert {1, %{"error" => _}} = run(["pair", service, code, store])
+    refute File.exists?(store)
   end
 end

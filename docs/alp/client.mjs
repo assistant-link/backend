@@ -11,7 +11,7 @@
 // The store file stands in for the agent's secret store: it holds the Link token together with the
 // service URL it was issued by, and every request goes to that URL only. Nothing here prints the token.
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 const [command, ...args] = process.argv.slice(2);
 const print = (value) => console.log(JSON.stringify(value));
@@ -53,9 +53,21 @@ function uuidv7() {
 
 async function pair(service, code, store) {
   service = normalize(service);
+  // Claimed before the code is spent, because the token is returned only once; "wx" keeps another
+  // Link's token from being overwritten.
+  let file;
+  try {
+    file = openSync(store, "wx", 0o600);
+  } catch ({ code }) {
+    fail({ store: code });
+  }
+  // Runs on every exit, including fail's, until the token is written.
+  const release = () => unlinkSync(store);
+  process.on("exit", release);
   const { link_id, assistant_name, token } = await request("POST", `${service}/alp/v1/pair`, { body: { code } });
-  // The token is returned only once; "wx" keeps another Link's token from being overwritten.
-  writeFileSync(store, JSON.stringify({ service, token }), { mode: 0o600, flag: "wx" });
+  writeFileSync(file, JSON.stringify({ service, token }));
+  closeSync(file);
+  process.off("exit", release);
   print({ link_id, assistant_name });
 }
 
