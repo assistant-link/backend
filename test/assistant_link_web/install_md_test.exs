@@ -182,6 +182,20 @@ defmodule AssistantLinkWeb.InstallMdTest do
     assert_order(protocol, ["connection.ready", "event.deliver", "connection.caught_up", "call_started"])
   end
 
+  test "both paths let the agent hang up a call", %{body: body} do
+    assert_contains(section(body, @cli), ["al-hermes hangup", "al-hermes call` exits 0", "call_ended"])
+
+    protocol = section(body, "### 7. Calls\n")
+
+    assert_contains(protocol, [
+      ~s(auth | curl -fsS -X POST "$SERVICE/alp/v1/hangup" -H @-),
+      "not_on_call",
+      "call_ended"
+    ])
+
+    assert_order(protocol, ["Close when `call_ended` arrives", "/alp/v1/hangup"])
+  end
+
   test "both paths share how wake-ups work", %{body: body} do
     wake = section(body, @wake)
 

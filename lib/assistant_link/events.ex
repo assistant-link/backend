@@ -147,13 +147,47 @@ defmodule AssistantLink.Events do
 
   defp insert_call_event(template, key) do
     with {:ok, uuid} <- cast_key(template, key),
-         {:ok, event} <- Repo.transact(fn -> insert_event(%{template | idempotency_key: uuid}) end) do
+         {:ok, event} <- Repo.transact(fn -> insert_checked_call_event(%{template | idempotency_key: uuid}) end) do
       broadcast(event.account_id, {:event_created, event})
       {:ok, event, :created}
     else
-      {:error, %Ecto.Changeset{}} -> store_call_event(template, key)
-      {:error, _reason} = error -> error
+      {:error, %Ecto.Changeset{}} ->
+        store_call_event(template, key)
+
+      # A concurrent hangup with the same key may have ended the call first.
+      {:error, :not_on_call} = error ->
+        if stored(template.account_id, key), do: store_call_event(template, key), else: error
+
+      {:error, _reason} = error ->
+        error
     end
+  end
+
+  defp insert_checked_call_event(%Event{sender: :user} = event), do: insert_event(event)
+
+  # Locking the Assistant first keeps a concurrent hangup from ending the same call twice.
+  defp insert_checked_call_event(%Event{assistant_id: assistant_id} = event) do
+    Repo.one!(from a in Assistant, where: a.id == ^assistant_id, lock: "FOR UPDATE", select: a.id)
+    if on_call?(assistant_id), do: insert_event(event), else: {:error, :not_on_call}
+  end
+
+  @doc """
+  Stores an agent's `call_ended` as its Link's Assistant when the Assistant is `on_call?/1`. Params are an
+  optional `"idempotency_key"` (a UUIDv7) that only the same Link's hangup can repeat, also after the call ended.
+  """
+  @spec hang_up(Link.t(), map()) ::
+          {:ok, Event.t(), :created | :existing}
+          | {:error, :idempotency_key_conflict | :invalid_params | :not_on_call}
+  def hang_up(%Link{} = link, params) do
+    template = %Event{
+      account_id: link.account_id,
+      assistant_id: link.assistant_id,
+      link_id: link.id,
+      sender: :assistant,
+      type: :call_ended
+    }
+
+    store_call_event(template, params["idempotency_key"])
   end
 
   @doc "Whether the Assistant's last call event is a `call_started` from the last #{@call_window_minutes} minutes."
@@ -291,8 +325,8 @@ defmodule AssistantLink.Events do
   end
 
   @doc """
-  The next event to deliver to a Link: the user's event with the lowest `seq` after the Link's
-  cursor, a deleted one included. `nil` when there is none or the account was deleted.
+  The next event to deliver to a Link: the user's event or agent's `call_ended` with the lowest `seq`
+  after the Link's cursor, a deleted one included. `nil` when there is none or the account was deleted.
   """
   @spec next_deliverable(Ecto.UUID.t()) :: Event.t() | nil
   def next_deliverable(link_id) do
@@ -303,8 +337,6 @@ defmodule AssistantLink.Events do
   @spec count_deliverable(Ecto.UUID.t()) :: non_neg_integer()
   def count_deliverable(link_id), do: link_id |> deliverable() |> Repo.aggregate(:count)
 
-  defp user_events, do: from(e in Event, where: e.sender == :user)
-
   @doc "The highest `seq` `next_deliverable/1` would return, `nil` when there is none."
   @spec last_deliverable_seq(Ecto.UUID.t()) :: integer() | nil
   def last_deliverable_seq(link_id), do: link_id |> deliverable() |> select([e], max(e.seq)) |> Repo.one()
@@ -313,8 +345,16 @@ defmodule AssistantLink.Events do
   @spec waiting?(Ecto.UUID.t(), integer()) :: boolean()
   def waiting?(link_id, seq), do: link_id |> deliverable() |> where([e], e.seq <= ^seq) |> Repo.exists?()
 
+  @doc "Whether the event is of a kind `next_deliverable/1` delivers to the Links of its Assistant."
+  @spec deliverable?(Event.t()) :: boolean()
+  def deliverable?(%Event{} = event), do: event.sender == :user or event.type == :call_ended
+
+  defp user_events, do: from(e in Event, where: e.sender == :user)
+
+  defp deliverable_events, do: from(e in Event, where: e.sender == :user or e.type == :call_ended)
+
   defp deliverable(link_id) do
-    from e in user_events(),
+    from e in deliverable_events(),
       join: l in Link,
       on: l.assistant_id == e.assistant_id and l.account_id == e.account_id,
       join: a in Account,
@@ -324,7 +364,7 @@ defmodule AssistantLink.Events do
 
   @doc """
   Moves the Link's cursor to the event a Link acknowledged and, for the first acknowledgement by any
-  Link, calls `mark_delivered/2`. An `event_id` that is not a user's event of the Link's
+  Link, calls `mark_delivered/2`. An `event_id` that is not a deliverable event of the Link's
   Assistant after its cursor changes nothing, so the cursor never moves backward.
   """
   @spec acknowledge(Ecto.UUID.t(), term()) :: :ok
@@ -340,7 +380,7 @@ defmodule AssistantLink.Events do
   defp advance_cursor(link_id, event_id) do
     advance =
       from l in Link,
-        join: e in ^user_events(),
+        join: e in ^deliverable_events(),
         on: e.assistant_id == l.assistant_id and e.account_id == l.account_id,
         join: a in Account,
         on: a.id == l.account_id,

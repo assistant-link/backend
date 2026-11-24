@@ -48,8 +48,12 @@ defmodule AssistantLinkWeb.API.FallbackController do
     APIError.send_error(conn, 409, "not_connected", "The activity shows only while the Assistant Link is connected.")
   end
 
+  def call(conn, {:error, :not_on_call}) do
+    APIError.send_error(conn, 409, "not_on_call", "The Assistant is not on a call.")
+  end
+
   def call(conn, {:error, :idempotency_key_conflict}) do
-    APIError.send_error(conn, 409, "idempotency_key_conflict", "This idempotency key was used for another message.")
+    APIError.send_error(conn, 409, "idempotency_key_conflict", "This idempotency key was used for another request.")
   end
 
   defp error_message(changeset) do

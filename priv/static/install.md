@@ -182,6 +182,9 @@ If you can receive neither, keep `al-hermes wait` running instead.
 Run `al-hermes read` and answer each message with `al-hermes send`. If it shows a `call_started` without a later
 `call_ended`, the user is in a call: run `al-hermes call` to join it instead.
 
+To end the call from your side, for example once the user says goodbye, run `al-hermes hangup`. It ends the call in
+the app, and `al-hermes call` exits 0 when it sees the `call_ended`.
+
 ### If `al` fails
 
 Stop and tell the user, instead of retrying, when:
@@ -246,7 +249,7 @@ auth | curl -fsS "$SERVICE/alp/v1/link" -H @-
 # {"link_id":"0199b5c4-...","assistant_name":"Hermes","unread_count":0}
 ```
 
-`200` means the token works; `unread_count` is how many of the user's messages wait for you.
+`200` means the token works; `unread_count` is how many events wait for you.
 
 Then tell the service which platform you run on, so the user can get help for it. Use one of `muse`, `grokbot`,
 `dots`, `duet`, `hermes`, `openclaw`, or `instinct` if it fits; any other short name of your platform is fine too.
@@ -312,6 +315,16 @@ A `call_started` without a later `call_ended` means the user is in a voice call.
 words arrive as `text_message` events with `"via": "voice"`. Answer each at once, briefly, in plain speakable text,
 with `POST /alp/v1/messages`; the app reads your text replies aloud. Close when `call_ended` arrives. There is no audio
 endpoint: `al call` on the other path does only this too, waiting until `call_ended`.
+
+To end the call from your side, for example once the user says goodbye, hang up:
+
+```sh
+auth | curl -fsS -X POST "$SERVICE/alp/v1/hangup" -H @- -H 'content-type: application/json' \
+  -d '{"idempotency_key": "<a new UUIDv7>"}'
+```
+
+The app ends the call, and the `call_ended` also arrives on your WebSocket: acknowledge it and close as usual. A `409`
+(`not_on_call`) means there is no call to end.
 
 ### If a request fails
 

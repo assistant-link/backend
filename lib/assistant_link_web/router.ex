@@ -116,6 +116,7 @@ defmodule AssistantLinkWeb.Router do
     put "/link/activity", ActivityController, :update
     delete "/link/activity", ActivityController, :delete
     post "/messages", MessageController, :create
+    post "/hangup", HangupController, :create
   end
 
   ## Authentication routes
