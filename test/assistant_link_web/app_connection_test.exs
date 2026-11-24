@@ -181,6 +181,20 @@ defmodule AssistantLinkWeb.AppConnectionTest do
       :ok = close(app)
     end
 
+    test "sends reply_to in event.created for a reply", %{app: app, scope: scope, link: link} do
+      {:ok, %{id: question_id}, :created} = Events.create_text_message(scope, link.assistant_id, message_params())
+      assert_receive {:ws, ^app, {:text, %{"method" => "event.created", "params" => %{"event" => question}}}}
+      refute Map.has_key?(question, "reply_to")
+
+      params = Map.put(message_params(), "reply_to", question_id)
+      {:ok, _event, :created} = Events.create_text_message(scope, link.assistant_id, params)
+
+      assert_receive {:ws, ^app,
+                      {:text, %{"method" => "event.created", "params" => %{"event" => %{"reply_to" => ^question_id}}}}}
+
+      :ok = close(app)
+    end
+
     test "sends one event.updated when a Link first acknowledges the message", %{app: app, scope: scope, link: link} do
       {:ok, %{id: id}, :created} = Events.create_text_message(scope, link.assistant_id, message_params())
       assert_receive {:ws, ^app, {:text, %{"method" => "event.created"}}}

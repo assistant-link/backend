@@ -179,8 +179,11 @@ If you can receive neither, keep `al-hermes wait` running instead.
 
 ### Answer after a wake
 
-Run `al-hermes read` and answer each message with `al-hermes send`. If it shows a `call_started` without a later
-`call_ended`, the user is in a call: run `al-hermes call` to join it instead.
+Run `al-hermes read` and answer each message with `al-hermes send`. A message that answers an earlier one has
+`"reply_to"`, the `id` of the event it answers. To answer one message in particular, use `al-hermes send --reply-to
+<its id>`.
+If it shows a `call_started` without a later `call_ended`, the user is in a call: run `al-hermes call` to join it
+instead.
 
 To end the call from your side, for example once the user says goodbye, run `al-hermes hangup`. It ends the call in
 the app, and `al-hermes call` exits 0 when it sees the `call_ended`.
@@ -306,6 +309,9 @@ If you can receive neither, keep the WebSocket of step 6 open instead.
    auth | curl -fsS -X POST "$SERVICE/alp/v1/messages" -H @- -H 'content-type: application/json' \
      -d '{"text": "<your answer>", "idempotency_key": "<a new UUIDv7>"}'
    ```
+
+   An event that answers an earlier message has `"reply_to"`, the `id` of the event it answers. To answer one message
+   in particular, add `"reply_to": "<its id>"` to the request.
 
 5. After `connection.caught_up`, close the connection if that is all you needed, unless a call is on (step 7).
 

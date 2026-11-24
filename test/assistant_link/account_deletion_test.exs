@@ -21,18 +21,21 @@ defmodule AssistantLink.AccountDeletionTest do
 
   @owned_by_account [TextMessage, Event, PairingCode, WakeEmailConfirmation, Link, Assistant, Device, Membership]
 
-  # An account with a paired Link that sent a wake email confirmation, a text message, and an unused pairing code.
+  # An account with a paired Link that sent a wake email confirmation, a text message and a reply to it, and an
+  # unused pairing code.
   defp populate(scope) do
     {link, link_token} = paired_link_fixture(scope)
     address = "agent#{System.unique_integer([:positive])}@example.com"
     {:ok, link} = Links.put_wake_email(link, %{"address" => address})
     true = Links.claim_wake_email_confirmation(link)
 
-    {:ok, _event, :created} =
+    {:ok, message, :created} =
       Events.create_text_message(scope, link.assistant_id, %{
         "text" => "Hi",
         "idempotency_key" => Ecto.UUID.generate(version: 7, precision: :monotonic)
       })
+
+    {:ok, _reply, :created} = Events.create_assistant_message(link, %{"text" => "Hello", "reply_to" => message.id})
 
     {:ok, unpaired} = Links.create_link(scope, link.assistant_id, %{})
     {:ok, %{code: code}} = Links.issue_pairing_code(scope, unpaired.id)

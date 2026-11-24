@@ -167,6 +167,16 @@ defmodule AssistantLinkWeb.EventDeliveryTest do
       assert request["params"]["text_message"] == %{"text" => "Hi", "via" => "voice"}
     end
 
+    test "includes reply_to when set", %{scope: scope, assistant: assistant, link: link} = context do
+      {:ok, question, :created} = Events.create_assistant_message(link, %{"text" => "Which one?"})
+      params = %{"text" => "Blue", "reply_to" => question.id, "idempotency_key" => Ecto.UUID.generate(version: 7)}
+      {:ok, _event, :created} = Events.create_text_message(scope, assistant.id, params)
+      client = connect_agent(context)
+
+      assert {_id, %{"reply_to" => reply_to}} = receive_delivery(client)
+      assert reply_to == question.id
+    end
+
     test "sends a call event without content", %{scope: scope, assistant: assistant} = context do
       {:ok, event, :created} = Events.create_call_event(scope, assistant.id, call_params("call_started"))
       client = connect_agent(context)
