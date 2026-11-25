@@ -52,6 +52,14 @@ defmodule AssistantLinkWeb.API.FallbackController do
     APIError.send_error(conn, 409, "not_on_call", "The Assistant is not on a call.")
   end
 
+  def call(conn, {:error, :call_not_found}) do
+    APIError.send_error(conn, 404, "call_not_found", "This Assistant has no call with this id.")
+  end
+
+  def call(conn, {:error, :call_already_ended}) do
+    APIError.send_error(conn, 409, "call_already_ended", "This call has already ended.")
+  end
+
   def call(conn, {:error, :idempotency_key_conflict}) do
     APIError.send_error(conn, 409, "idempotency_key_conflict", "This idempotency key was used for another request.")
   end

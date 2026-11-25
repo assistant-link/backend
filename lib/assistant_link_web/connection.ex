@@ -12,7 +12,8 @@ defmodule AssistantLinkWeb.Connection do
   - An app connection sends its account's `link.status` changes (`online`, `idle` or `offline`; a Link that was just paired is `offline`), and `event.created` and `event.updated`
     with `{"event": event}` for its text messages, and `link.activity` with `{"link_id": ..., "activity": ...}`
     when a Link's activity is set or cleared, and `assistant.updated` with
-    `{"assistant": {"id": ..., "name": ..., "platform": ...}}` when an agent changes its Assistant's name or platform.
+    `{"assistant": {"id": ..., "name": ..., "platform": ...}}` when an agent changes its Assistant's name or platform,
+    and `call.transcript_entry` with `{"transcript_entry": entry}` when a call's transcript entry is saved or updated.
 
   Both send `connection.closing` and close when their account is deleted. The service pings every
   `:ping_interval` ms, and the connection closes after `:timeout` ms without a frame from the client.
@@ -23,6 +24,7 @@ defmodule AssistantLinkWeb.Connection do
   alias AssistantLink.Delivery
   alias AssistantLink.Links
   alias AssistantLinkWeb.API.EventJSON
+  alias AssistantLinkWeb.API.TranscriptEntryJSON
   alias AssistantLinkWeb.JSONRPC
 
   @protocol_version "1"
@@ -147,6 +149,13 @@ defmodule AssistantLinkWeb.Connection do
   end
 
   def handle_info({:assistant_updated, _assistant}, state), do: {:ok, state}
+
+  def handle_info({:call_transcript_entry, entry}, %{role: {:app, _account_id}} = state) do
+    params = TranscriptEntryJSON.show(%{transcript_entry: entry})
+    {:push, text(JSONRPC.notification("call.transcript_entry", params)), state}
+  end
+
+  def handle_info({:call_transcript_entry, _entry}, state), do: {:ok, state}
 
   def handle_info({:DOWN, _ref, :process, _pid, _reason}, %{role: {:agent, link}} = state) do
     :ok = Delivery.connect(link)

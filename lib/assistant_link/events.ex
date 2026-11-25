@@ -4,6 +4,7 @@ defmodule AssistantLink.Events do
 
   Subscribers to the account (see `AssistantLink.Accounts.subscribe/1`) get `{:event_created, event}`
   for each stored text message or call event and `{:event_updated, event}` when a user message is first delivered.
+  A call's `voice_call` event is stored and updated by `AssistantLink.Calls`.
   """
   import Ecto.Query, warn: false
 
@@ -12,6 +13,7 @@ defmodule AssistantLink.Events do
   alias AssistantLink.Accounts.Scope
   alias AssistantLink.Assistants
   alias AssistantLink.Assistants.Assistant
+  alias AssistantLink.Calls
   alias AssistantLink.Events.Event
   alias AssistantLink.Events.TextMessage
   alias AssistantLink.Links.Link
@@ -19,8 +21,6 @@ defmodule AssistantLink.Events do
 
   @default_limit 50
   @max_limit 100
-  # A `call_started` older than this counts as a call whose `call_ended` never arrived.
-  @call_window_minutes 60
 
   @doc "Stores the `link_created` event of a new Link. Call it in the transaction that creates the Link."
   @spec create_link_created(Link.t()) :: {:ok, Event.t()} | {:error, Ecto.Changeset.t()}
@@ -49,7 +49,7 @@ defmodule AssistantLink.Events do
           where: e.assistant_id == ^assistant.id and e.seq < ^before_seq,
           order_by: [desc: e.seq],
           limit: ^(limit + 1),
-          preload: :text_message
+          preload: [:text_message, :call]
 
       {page, older} = query |> Repo.all() |> Enum.split(limit)
       {:ok, %{events: Enum.reverse(page), has_more: older != []}}
@@ -114,6 +114,10 @@ defmodule AssistantLink.Events do
   Stores a user's call event for one of the scope's Assistants. Params are `"type"`, `"call_started"` or
   `"call_ended"`, and `"idempotency_key"` (a UUIDv7). A stored key returns its event as
   `{:ok, event, :existing}`, or `{:error, :idempotency_key_conflict}` when the type or the Assistant differs.
+
+  It keeps the Assistant's call in step for apps that do not start calls with `AssistantLink.Calls`: a
+  `call_started` starts a call, ending an open one as the system's, and a `call_ended` ends the open call as
+  the user's.
   """
   @spec create_call_event(Scope.t(), String.t(), map()) ::
           {:ok, Event.t(), :created | :existing}
@@ -148,8 +152,9 @@ defmodule AssistantLink.Events do
 
   defp insert_call_event(template, key) do
     with {:ok, uuid} <- cast_key(template, key),
-         {:ok, event} <- Repo.transact(fn -> insert_checked_call_event(%{template | idempotency_key: uuid}) end) do
-      broadcast(event.account_id, {:event_created, event})
+         {:ok, {event, notices}} <-
+           Repo.transact(fn -> insert_checked_call_event(%{template | idempotency_key: uuid}) end) do
+      Enum.each(notices, &broadcast(event.account_id, &1))
       {:ok, event, :created}
     else
       {:error, %Ecto.Changeset{}} ->
@@ -164,12 +169,33 @@ defmodule AssistantLink.Events do
     end
   end
 
-  defp insert_checked_call_event(%Event{sender: :user} = event), do: insert_event(event)
+  # Locking the Assistant first keeps concurrent requests from opening or ending the same call twice.
+  defp insert_checked_call_event(%Event{} = event) do
+    Calls.lock_assistant(event.assistant_id)
+    checked_call_event(event)
+  end
 
-  # Locking the Assistant first keeps a concurrent hangup from ending the same call twice.
-  defp insert_checked_call_event(%Event{assistant_id: assistant_id} = event) do
-    Repo.one!(from a in Assistant, where: a.id == ^assistant_id, lock: "FOR UPDATE", select: a.id)
-    if on_call?(assistant_id), do: insert_event(event), else: {:error, :not_on_call}
+  defp checked_call_event(%Event{sender: :user, type: :call_started} = event) do
+    {:ok, ended} = Calls.end_open_call(event.assistant_id, :system)
+
+    with {:ok, voice_call} <- Calls.insert_voice_call(event.account_id, event.assistant_id, :realtime_relay),
+         {:ok, started} <- insert_event(event) do
+      {:ok, {started, ended ++ [{:event_created, voice_call}, {:event_created, started}]}}
+    end
+  end
+
+  defp checked_call_event(%Event{sender: :user} = event), do: end_call(event, :user)
+
+  defp checked_call_event(event) do
+    if on_call?(event.assistant_id), do: end_call(event, :assistant), else: {:error, :not_on_call}
+  end
+
+  defp end_call(event, ended_by) do
+    {:ok, ended} = Calls.end_open_call(event.assistant_id, ended_by)
+
+    with {:ok, call_ended} <- insert_event(event) do
+      {:ok, {call_ended, ended ++ [{:event_created, call_ended}]}}
+    end
   end
 
   @doc """
@@ -191,18 +217,7 @@ defmodule AssistantLink.Events do
     store_call_event(template, params["idempotency_key"])
   end
 
-  @doc "Whether the Assistant's last call event is a `call_started` from the last #{@call_window_minutes} minutes."
-  @spec on_call?(Ecto.UUID.t()) :: boolean()
-  def on_call?(assistant_id) do
-    last_call_event =
-      from e in Event,
-        where: e.assistant_id == ^assistant_id and e.type in [:call_started, :call_ended],
-        order_by: [desc: e.seq],
-        limit: 1,
-        select: {e.type, e.inserted_at > ago(@call_window_minutes, "minute")}
-
-    Repo.one(last_call_event) == {:call_started, true}
-  end
+  defdelegate on_call?(assistant_id), to: Calls
 
   @doc """
   Stores an agent's text message as its Link's Assistant. Params are `"text"`, an optional `"reply_to"`
@@ -332,8 +347,12 @@ defmodule AssistantLink.Events do
       else: {:error, :no_paired_link}
   end
 
-  # Taking the next seq locks the Assistant's row until the transaction ends, so seqs are gapless.
-  defp insert_event(%Event{account_id: account_id, assistant_id: assistant_id} = event) do
+  @doc """
+  Stores an event with its Assistant's next `seq`. Taking the seq locks the Assistant's row until the
+  transaction ends, so seqs are gapless.
+  """
+  @spec insert_event(Event.t()) :: {:ok, Event.t()} | {:error, Ecto.Changeset.t()}
+  def insert_event(%Event{account_id: account_id, assistant_id: assistant_id} = event) do
     {1, [seq]} =
       Repo.update_all(
         from(a in Assistant,

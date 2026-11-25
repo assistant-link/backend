@@ -8,6 +8,7 @@ defmodule AssistantLinkWeb.AppConnectionTest do
 
   alias AssistantLink.Accounts
   alias AssistantLink.Assistants
+  alias AssistantLink.Calls
   alias AssistantLink.Events
   alias AssistantLink.Links
 
@@ -210,6 +211,49 @@ defmodule AssistantLinkWeb.AppConnectionTest do
                        }}}
 
       refute_receive {:ws, ^app, {:text, _message}}
+      :ok = close(app)
+    end
+
+    test "sends a call's voice_call event and its transcript entries", %{app: app, scope: scope, link: link} do
+      {:ok, %{id: call_id}, _call_started} = Calls.start_call(scope, link.assistant_id, %{})
+
+      assert_receive {:ws, ^app,
+                      {:text,
+                       %{
+                         "method" => "event.created",
+                         "params" => %{"event" => %{"type" => "voice_call", "voice_call" => %{"call_id" => ^call_id}}}
+                       }}}
+
+      assert_receive {:ws, ^app,
+                      {:text, %{"method" => "event.created", "params" => %{"event" => %{"type" => "call_started"}}}}}
+
+      params = %{"speaker" => "assistant", "text" => "Hello", "started_at" => "2026-11-25T10:00:00Z"}
+      {:ok, %{id: id}, :created} = Calls.create_transcript_entry(scope, link.assistant_id, call_id, params)
+
+      assert_receive {:ws, ^app, {:text, %{"method" => "call.transcript_entry", "params" => params}}}
+
+      assert params == %{
+               "transcript_entry" => %{
+                 "id" => id,
+                 "call_id" => call_id,
+                 "seq" => 1,
+                 "speaker" => "assistant",
+                 "text" => "Hello",
+                 "started_at" => "2026-11-25T10:00:00.000000Z",
+                 "ended_at" => nil
+               }
+             }
+
+      {:ok, _call} = Calls.end_call(scope, link.assistant_id, call_id)
+
+      assert_receive {:ws, ^app,
+                      {:text,
+                       %{
+                         "method" => "event.updated",
+                         "params" => %{"event" => %{"type" => "voice_call", "voice_call" => %{"ended_at" => ended_at}}}
+                       }}}
+
+      assert ended_at
       :ok = close(app)
     end
 

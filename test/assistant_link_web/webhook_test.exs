@@ -52,6 +52,13 @@ defmodule AssistantLinkWeb.WebhookTest do
     assert_receive {:webhook, "/hook", _auth, _json}, 1000
   end
 
+  test "pings when the user starts a call", %{conn: conn, assistant: assistant} do
+    conn |> post(~p"/api/v1/assistants/#{assistant.id}/calls") |> json_response(201)
+
+    assert_receive {:webhook, "/hook", _auth, json}, 1000
+    assert Jason.decode!(json)["type"] == "wake"
+  end
+
   test "does not ping a Link with a live connection", %{conn: conn, link: link, assistant: assistant} do
     :ok = Links.connect(link)
     post_message(conn, assistant)

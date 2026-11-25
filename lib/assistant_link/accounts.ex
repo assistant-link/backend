@@ -14,6 +14,8 @@ defmodule AssistantLink.Accounts do
   alias AssistantLink.Accounts.UserNotifier
   alias AssistantLink.Accounts.UserToken
   alias AssistantLink.Assistants.Assistant
+  alias AssistantLink.Calls.Call
+  alias AssistantLink.Calls.TranscriptEntry
   alias AssistantLink.Events.Event
   alias AssistantLink.Events.TextMessage
   alias AssistantLink.Links.Link
@@ -223,6 +225,7 @@ defmodule AssistantLink.Accounts do
     message is first delivered (see `AssistantLink.Events`)
   - `{:assistant_updated, assistant}` when an Assistant's name or platform changes (see
     `AssistantLink.Assistants.update_assistant/2`)
+  - `{:call_transcript_entry, entry}` when a call's transcript entry is saved or updated (see `AssistantLink.Calls`)
   - `:account_deleted` after the account was deleted
 
   Returns `{:error, :account_deleted}` for an account already deleted, whose subscribers get no
@@ -297,7 +300,18 @@ defmodule AssistantLink.Accounts do
     Enum.each(ids, &purge_account(&1, cutoff))
   end
 
-  @purged_children [TextMessage, Event, PairingCode, WakeEmailConfirmation, Link, Assistant, Device, Membership]
+  @purged_children [
+    TextMessage,
+    TranscriptEntry,
+    Call,
+    Event,
+    PairingCode,
+    WakeEmailConfirmation,
+    Link,
+    Assistant,
+    Device,
+    Membership
+  ]
 
   defp purge_account(account_id, cutoff) do
     Repo.transact(fn ->

@@ -11,6 +11,9 @@ defmodule AssistantLink.AccountDeletionTest do
   alias AssistantLink.Accounts.User
   alias AssistantLink.Accounts.UserToken
   alias AssistantLink.Assistants.Assistant
+  alias AssistantLink.Calls
+  alias AssistantLink.Calls.Call
+  alias AssistantLink.Calls.TranscriptEntry
   alias AssistantLink.Events
   alias AssistantLink.Events.Event
   alias AssistantLink.Events.TextMessage
@@ -19,10 +22,21 @@ defmodule AssistantLink.AccountDeletionTest do
   alias AssistantLink.Links.PairingCode
   alias AssistantLink.Links.WakeEmailConfirmation
 
-  @owned_by_account [TextMessage, Event, PairingCode, WakeEmailConfirmation, Link, Assistant, Device, Membership]
+  @owned_by_account [
+    TextMessage,
+    TranscriptEntry,
+    Call,
+    Event,
+    PairingCode,
+    WakeEmailConfirmation,
+    Link,
+    Assistant,
+    Device,
+    Membership
+  ]
 
-  # An account with a paired Link that sent a wake email confirmation, a text message and a reply to it, and an
-  # unused pairing code.
+  # An account with a paired Link that sent a wake email confirmation, a text message and a reply to it, a call
+  # with a transcript entry, and an unused pairing code.
   defp populate(scope) do
     {link, link_token} = paired_link_fixture(scope)
     address = "agent#{System.unique_integer([:positive])}@example.com"
@@ -36,6 +50,10 @@ defmodule AssistantLink.AccountDeletionTest do
       })
 
     {:ok, _reply, :created} = Events.create_assistant_message(link, %{"text" => "Hello", "reply_to" => message.id})
+
+    {:ok, call, _call_started} = Calls.start_call(scope, link.assistant_id, %{})
+    entry = %{"speaker" => "user", "text" => "Hi", "started_at" => "2026-11-25T10:00:00Z"}
+    {:ok, _entry, :created} = Calls.create_transcript_entry(scope, link.assistant_id, call.id, entry)
 
     {:ok, unpaired} = Links.create_link(scope, link.assistant_id, %{})
     {:ok, %{code: code}} = Links.issue_pairing_code(scope, unpaired.id)

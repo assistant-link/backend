@@ -77,6 +77,12 @@ defmodule AssistantLinkWeb.Router do
     get "/assistants/:assistant_id/events", EventController, :index
     post "/assistants/:assistant_id/messages", MessageController, :create
     post "/assistants/:assistant_id/call_events", CallEventController, :create
+    post "/assistants/:assistant_id/calls", CallController, :create
+    get "/assistants/:assistant_id/calls/:id", CallController, :show
+    post "/assistants/:assistant_id/calls/:id/end", CallController, :hang_up
+    get "/assistants/:assistant_id/calls/:call_id/transcript", TranscriptEntryController, :index
+    post "/assistants/:assistant_id/calls/:call_id/transcript_entries", TranscriptEntryController, :create
+    patch "/assistants/:assistant_id/calls/:call_id/transcript_entries/:id", TranscriptEntryController, :update
     post "/wake", WakeController, :create
     put "/device/push_token", PushTokenController, :update
     delete "/device/push_token", PushTokenController, :delete

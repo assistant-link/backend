@@ -2,8 +2,11 @@ defmodule AssistantLinkWeb.API.CallEventControllerTest do
   use AssistantLinkWeb.ConnCase, async: true
 
   import AssistantLink.LinksFixtures
+  import Ecto.Query, only: [from: 2]
 
   alias AssistantLink.Accounts
+  alias AssistantLink.Calls.Call
+  alias AssistantLink.Events
   alias AssistantLink.Events.Event
   alias AssistantLink.Repo
 
@@ -37,7 +40,7 @@ defmodule AssistantLinkWeb.API.CallEventControllerTest do
            } = conn |> call_event(assistant.id, params) |> json_response(201)
 
     refute Map.has_key?(event, "call_started")
-    assert %Event{seq: 2, sender: :user} = Repo.get!(Event, id)
+    assert %Event{seq: 3, sender: :user} = Repo.get!(Event, id)
   end
 
   test "a replay of the key returns the stored event with 200", %{conn: conn, assistant: assistant} do
@@ -85,6 +88,48 @@ defmodule AssistantLinkWeb.API.CallEventControllerTest do
     call_event(conn, assistant.id, params("call_started"))
 
     events = conn |> get(~p"/api/v1/assistants/#{assistant.id}/events") |> json_response(200) |> Map.fetch!("events")
-    assert Enum.map(events, & &1["type"]) == ["link_created", "call_started"]
+    assert Enum.map(events, & &1["type"]) == ["link_created", "voice_call", "call_started"]
+  end
+
+  describe "for an app that does not know calls" do
+    test "call_started starts a call and call_ended ends it as the user's", %{conn: conn, assistant: assistant} do
+      conn |> call_event(assistant.id, params("call_started")) |> json_response(201)
+
+      assert [%Call{id: id, mode: :realtime_relay, ended_at: nil}] = Repo.all(Call)
+      assert Events.on_call?(assistant.id)
+
+      conn |> call_event(assistant.id, params("call_ended")) |> json_response(201)
+
+      assert %Call{ended_by: :user, ended_at: %DateTime{}} = Repo.get!(Call, id)
+      refute Events.on_call?(assistant.id)
+    end
+
+    test "a second call_started ends the open call as the system's", %{conn: conn, assistant: assistant} do
+      call_event(conn, assistant.id, params("call_started"))
+      call_event(conn, assistant.id, params("call_started"))
+
+      assert [%Call{ended_by: :system}, %Call{ended_at: nil}] = Repo.all(from c in Call, order_by: c.started_at)
+    end
+
+    test "call_ended without a call stores only the event", %{conn: conn, assistant: assistant} do
+      conn |> call_event(assistant.id, params("call_ended")) |> json_response(201)
+
+      assert Repo.aggregate(Call, :count) == 0
+    end
+
+    test "a replayed call_started starts no other call", %{conn: conn, assistant: assistant} do
+      params = params("call_started")
+      call_event(conn, assistant.id, params)
+      conn |> call_event(assistant.id, params) |> json_response(200)
+
+      assert Repo.aggregate(Call, :count) == 1
+    end
+
+    test "call_ended ends a call the app started with the calls API", %{conn: conn, assistant: assistant} do
+      %{"call" => %{"id" => id}} = conn |> post(~p"/api/v1/assistants/#{assistant.id}/calls") |> json_response(201)
+      call_event(conn, assistant.id, params("call_ended"))
+
+      assert %Call{ended_by: :user} = Repo.get!(Call, id)
+    end
   end
 end
