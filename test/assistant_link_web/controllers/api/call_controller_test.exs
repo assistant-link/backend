@@ -28,6 +28,9 @@ defmodule AssistantLinkWeb.API.CallControllerTest do
   defp events(conn, assistant_id),
     do: conn |> get(~p"/api/v1/assistants/#{assistant_id}/events") |> json_response(200) |> Map.fetch!("events")
 
+  defp voice_call(conn, assistant_id, call_id),
+    do: conn |> events(assistant_id) |> Enum.find_value(&(&1["voice_call"]["call_id"] == call_id && &1["voice_call"]))
+
   defp age(call_id, minutes) do
     started_at = DateTime.shift(DateTime.utc_now(), minute: -minutes)
     Repo.update_all(from(c in Call, where: c.id == ^call_id), set: [started_at: started_at])
@@ -104,6 +107,38 @@ defmodule AssistantLinkWeb.API.CallControllerTest do
       assert %Call{ended_by: :system, ended_at: %DateTime{}} = Repo.get!(Call, old_id)
       assert %Call{ended_at: nil} = Repo.get!(Call, new_id)
       assert_receive {:event_updated, %Event{type: :voice_call, call: %Call{id: ^old_id, ended_by: :system}}}
+    end
+
+    test "ends an abandoned call an hour after it started, not when the next call starts",
+         %{conn: conn, assistant: assistant} do
+      old_id = conn |> start_call(assistant.id) |> json_response(201) |> get_in(["call", "id"])
+      age(old_id, 3 * 24 * 60)
+
+      conn |> start_call(assistant.id) |> json_response(201)
+
+      assert %{"duration_seconds" => 3600} = voice_call(conn, assistant.id, old_id)
+    end
+
+    test "ends an abandoned call at its last transcript entry", %{conn: conn, assistant: assistant} do
+      old_id = conn |> start_call(assistant.id) |> json_response(201) |> get_in(["call", "id"])
+      age(old_id, 3 * 24 * 60)
+      %Call{started_at: started_at} = Repo.get!(Call, old_id)
+      entries_path = ~p"/api/v1/assistants/#{assistant.id}/calls/#{old_id}/transcript_entries"
+
+      for {offset, ended} <- [{10, 95}, {30, nil}] do
+        params = %{
+          "speaker" => "user",
+          "text" => "Hi",
+          "started_at" => DateTime.shift(started_at, second: offset),
+          "ended_at" => ended && DateTime.shift(started_at, second: ended)
+        }
+
+        conn |> post(entries_path, params) |> json_response(201)
+      end
+
+      conn |> start_call(assistant.id) |> json_response(201)
+
+      assert %{"duration_seconds" => 95} = voice_call(conn, assistant.id, old_id)
     end
 
     test "starts the call with the app's UUIDv7 id and returns it again for that id",

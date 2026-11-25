@@ -144,10 +144,7 @@ defmodule AssistantLink.Calls do
   def create_transcript_entry(%Scope{} = scope, assistant_id, call_id, params) do
     with {:ok, call} <- get_call(scope, assistant_id, call_id),
          {:ok, id} <- cast_id(params["id"]) do
-      case id && Repo.get_by(TranscriptEntry, id: id, call_id: call.id) do
-        %TranscriptEntry{} = entry -> {:ok, entry, :existing}
-        nil -> insert_entry(call, id, params)
-      end
+      insert_entry(call, id, params)
     end
   end
 
@@ -170,16 +167,17 @@ defmodule AssistantLink.Calls do
     result =
       Repo.transact(fn ->
         Repo.one!(from c in Call, where: c.id == ^call.id, lock: "FOR UPDATE", select: c.id)
-        seq = Repo.one(from t in TranscriptEntry, where: t.call_id == ^call.id, select: max(t.seq)) || 0
 
-        changeset
-        |> Changeset.put_change(:call_id, call.id)
-        |> Changeset.put_change(:seq, seq + 1)
-        |> Changeset.unique_constraint(:id, name: :call_transcript_entries_pkey)
-        |> Repo.insert()
+        case id && Repo.get_by(TranscriptEntry, id: id, call_id: call.id) do
+          %TranscriptEntry{} = entry -> {:ok, {entry, :existing}}
+          nil -> insert_next_entry(call, changeset)
+        end
       end)
 
     case result do
+      {:ok, {entry, :existing}} ->
+        {:ok, entry, :existing}
+
       {:ok, entry} ->
         broadcast(call.account_id, [{:call_transcript_entry, entry}])
         {:ok, entry, :created}
@@ -190,6 +188,16 @@ defmodule AssistantLink.Calls do
       {:error, _changeset} = error ->
         error
     end
+  end
+
+  defp insert_next_entry(call, changeset) do
+    seq = Repo.one(from t in TranscriptEntry, where: t.call_id == ^call.id, select: max(t.seq)) || 0
+
+    changeset
+    |> Changeset.put_change(:call_id, call.id)
+    |> Changeset.put_change(:seq, seq + 1)
+    |> Changeset.unique_constraint(:id, name: :call_transcript_entries_pkey)
+    |> Repo.insert()
   end
 
   @doc ~s(Updates the `"text"` and `"ended_at"` of a call's transcript entry, also after the call ended.)
@@ -267,9 +275,30 @@ defmodule AssistantLink.Calls do
   defp current?(nil), do: false
 
   defp close(call, ended_by) do
-    call = call |> Changeset.change(ended_at: DateTime.utc_now(), ended_by: ended_by) |> Repo.update!()
+    call = call |> Changeset.change(ended_at: ended_at(call, ended_by), ended_by: ended_by) |> Repo.update!()
     %{Repo.get!(Event, call.event_id) | call: call}
   end
+
+  # A call whose end never arrived ends at its last transcript entry, or else after the window, rather than when
+  # the next call starts.
+  defp ended_at(call, :system) do
+    if current?(call) do
+      DateTime.utc_now()
+    else
+      last_spoken =
+        Repo.one(
+          from t in TranscriptEntry,
+            where: t.call_id == ^call.id,
+            select: type(max(coalesce(t.ended_at, t.started_at)), :utc_datetime_usec)
+        )
+
+      # Entry times come from the app, so keep them inside the call.
+      ended_at = last_spoken || DateTime.shift(call.started_at, minute: @call_window_minutes)
+      Enum.min([Enum.max([ended_at, call.started_at], DateTime), DateTime.utc_now()], DateTime)
+    end
+  end
+
+  defp ended_at(_call, _ended_by), do: DateTime.utc_now()
 
   defp broadcast(account_id, notices) do
     for notice <- notices, do: Phoenix.PubSub.broadcast(AssistantLink.PubSub, Accounts.topic(account_id), notice)
