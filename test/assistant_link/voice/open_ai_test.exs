@@ -128,4 +128,33 @@ defmodule AssistantLink.Voice.OpenAITest do
     refute log =~ @key
     refute log =~ "a=fingerprint"
   end
+
+  test "is unavailable when OpenAI answers an HTML page, and logs no body" do
+    Req.Test.stub(__MODULE__, fn conn ->
+      conn
+      |> Conn.put_resp_content_type("text/html")
+      |> Conn.send_resp(502, "<html><body>Bad Gateway from the proxy</body></html>")
+    end)
+
+    log = capture_log(fn -> assert start(config()) == {:error, :voice_unavailable} end)
+
+    assert log =~ "HTTP 502 (nil)"
+    refute log =~ "Bad Gateway"
+    refute log =~ "BadMapError"
+  end
+
+  test "is unavailable when OpenAI answers an error string, and logs no body" do
+    Req.Test.stub(__MODULE__, fn conn ->
+      conn
+      |> Conn.put_status(500)
+      |> Req.Test.json(%{error: "upstream exploded for #{@key}"})
+    end)
+
+    log = capture_log(fn -> assert start(config()) == {:error, :voice_unavailable} end)
+
+    assert log =~ "HTTP 500 (nil)"
+    refute log =~ "upstream exploded"
+    refute log =~ @key
+    refute log =~ "BadMapError"
+  end
 end

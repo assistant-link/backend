@@ -134,8 +134,7 @@ defmodule AssistantLink.Voice.OpenAI do
         {:ok, answer}
 
       {:ok, %Req.Response{status: status, body: body}} ->
-        code = get_in(body, [Access.key("error", %{}), Access.key("code")])
-        Logger.error("Voice chat could not start: OpenAI answered HTTP #{status} (#{inspect(code)}).")
+        Logger.error("Voice chat could not start: OpenAI answered HTTP #{status} (#{inspect(error_code(body))}).")
         {:error, :logged}
 
       {:error, exception} ->
@@ -146,6 +145,9 @@ defmodule AssistantLink.Voice.OpenAI do
         {:error, :logged}
     end
   end
+
+  defp error_code(%{"error" => %{"code" => code}}), do: code
+  defp error_code(_body), do: nil
 
   @impl GenServer
   def handle_cast({:audio, packet}, state) do
