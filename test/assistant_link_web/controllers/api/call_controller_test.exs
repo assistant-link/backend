@@ -156,16 +156,35 @@ defmodule AssistantLinkWeb.API.CallControllerTest do
       refute_received {:event_created, _event}
     end
 
-    test "returns the open call when the app sends another id", %{conn: conn, assistant: assistant} do
-      %{"call" => call} = conn |> start_call(assistant.id) |> json_response(201)
+    test "ends the open call as the system's and starts the app's new one when it sends another id",
+         %{conn: conn, assistant: assistant} do
+      old_id = conn |> start_call(assistant.id) |> json_response(201) |> get_in(["call", "id"])
       assert_receive {:event_created, %Event{type: :voice_call}}
       assert_receive {:event_created, %Event{type: :call_started}}
+      id = Ecto.UUID.generate(version: 7)
 
-      assert conn |> start_call(assistant.id, %{"id" => Ecto.UUID.generate(version: 7)}) |> json_response(200) ==
-               %{"call" => call}
+      assert %{"call" => %{"id" => ^id, "ended_at" => nil}} =
+               conn |> start_call(assistant.id, %{"id" => id}) |> json_response(201)
 
-      assert Repo.aggregate(Call, :count) == 1
-      refute_received {:event_created, _event}
+      assert %Call{ended_by: :system, ended_at: %DateTime{}} = Repo.get!(Call, old_id)
+      assert [_link_created, _voice_call, _started, new_voice_call, call_started] = events(conn, assistant.id)
+      assert %{"type" => "voice_call", "voice_call" => %{"call_id" => ^id}} = new_voice_call
+      assert %{"type" => "call_started"} = call_started
+
+      assert_receive {:event_updated, %Event{type: :voice_call, call: %Call{id: ^old_id, ended_by: :system}}}
+      assert_receive {:event_created, %Event{type: :voice_call, call: %Call{id: ^id}}}
+      assert_receive {:event_created, %Event{type: :call_started}}
+      assert Events.on_call?(assistant.id)
+    end
+
+    test "the id of another call while one is open is 422 invalid_params and leaves it open",
+         %{conn: conn, scope: scope, assistant: assistant} do
+      {other, _token} = paired_link_fixture(scope, "Athena")
+      other_id = conn |> start_call(other.assistant_id) |> json_response(201) |> get_in(["call", "id"])
+      open_id = conn |> start_call(assistant.id) |> json_response(201) |> get_in(["call", "id"])
+
+      assert error_code(start_call(conn, assistant.id, %{"id" => other_id}), 422) == "invalid_params"
+      assert %Call{ended_at: nil} = Repo.get!(Call, open_id)
     end
 
     test "an ended call's id or another Assistant's is 422 invalid_params",

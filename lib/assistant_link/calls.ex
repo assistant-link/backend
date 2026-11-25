@@ -26,8 +26,8 @@ defmodule AssistantLink.Calls do
   Starts a call with one of the scope's Assistants. Params are an optional `"mode"`, `"realtime_relay"`
   (the default) or `"native"`, and an optional `"id"` (a UUIDv7) for the new call. Returns the new call with its
   `call_started` event. An open call from the last #{@call_window_minutes} minutes is returned as
-  `{:ok, call, :existing}` whatever the `"id"`, so a repeated request gets the call it started; an older one is
-  ended as the system's first. An `"id"` some other call already has is `{:error, :invalid_params}`.
+  `{:ok, call, :existing}` when the `"id"` is its own or omitted, so a repeated request gets the call it started;
+  any other open call is ended as the system's first. An `"id"` some other call already has is `{:error, :invalid_params}`.
   """
   @spec start_call(Scope.t(), String.t(), map()) ::
           {:ok, Call.t(), Event.t() | :existing} | {:error, :not_found | :invalid_params}
@@ -55,7 +55,7 @@ defmodule AssistantLink.Calls do
 
     call = open_call(assistant.id)
 
-    if current?(call) do
+    if current?(call) and id in [nil, call.id] do
       {:ok, {call, :existing, []}}
     else
       {:ok, ended} = end_open_call(assistant.id, :system)
