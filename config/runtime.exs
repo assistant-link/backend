@@ -39,17 +39,59 @@ if config_env() != :test and System.get_env("APNS_KEY_P8") not in [nil, ""] do
     env: apns_env
 end
 
+# Voice calls. Without OPENAI_API_KEY each call's WebRTC offer gets `voice_unavailable`; nothing else changes.
+if config_env() != :test do
+  port_range =
+    case System.get_env("WEBRTC_PORT_RANGE", "") do
+      "" ->
+        nil
+
+      range ->
+        with [_range, first, last] <- Regex.run(~r/\A(\d+)-(\d+)\z/, range),
+             {first, last} when first in 1..65_535 and last in first..65_535//1 <-
+               {String.to_integer(first), String.to_integer(last)} do
+          first..last//1
+        else
+          _invalid -> raise "WEBRTC_PORT_RANGE must look like 50000-50099, got: #{inspect(range)}"
+        end
+    end
+
+  public_ip =
+    case System.get_env("WEBRTC_PUBLIC_IP", "") do
+      "" ->
+        nil
+
+      ip ->
+        case :inet.parse_ipv4strict_address(String.to_charlist(ip)) do
+          {:ok, ip} -> ip
+          {:error, _reason} -> raise "WEBRTC_PUBLIC_IP must be an IPv4 address, got: #{inspect(ip)}"
+        end
+    end
+
+  config :assistant_link, AssistantLink.Voice,
+    listen_host: System.get_env("WEBRTC_LISTEN_HOST"),
+    public_ip: public_ip,
+    port_range: port_range,
+    drain_timeout: if(config_env() == :prod, do: to_timeout(second: 280), else: 0)
+
+  config :assistant_link, AssistantLink.Voice.OpenAI, api_key: System.get_env("OPENAI_API_KEY")
+end
+
+if config_env() == :dev and System.get_env("VOICE_VENDOR") == "fake" do
+  config :assistant_link, AssistantLink.Voice, vendor: AssistantLink.Voice.FakeVendor
+end
+
 if config_env() == :dev do
   config :assistant_link, AssistantLinkWeb.Endpoint,
     live_reload: [
       web_console_logger: true,
       patterns: [
-        # Static assets, except user uploads
         ~r"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$"E,
-        # Gettext translations
+        # Static assets, except user uploads
         ~r"priv/gettext/.*\.po$"E,
-        # Router, Controllers, LiveViews and LiveComponents
+        # Gettext translations
         ~r"lib/assistant_link_web/router\.ex$"E,
+        # Router, Controllers, LiveViews and LiveComponents
         ~r"lib/assistant_link_web/(controllers|live|components)/.*\.(ex|heex)$"E
       ]
     ]
@@ -78,8 +120,8 @@ if config_env() == :prod do
       """
 
   host = System.get_env("PHX_HOST") || "example.com"
-  # The public URL agents and the app use, which differs from PORT behind a TLS-terminating proxy.
   scheme = System.get_env("PHX_SCHEME", "https")
+  # The public URL agents and the app use, which differs from PORT behind a TLS-terminating proxy.
   url_port = String.to_integer(System.get_env("PHX_URL_PORT") || if(scheme == "https", do: "443", else: "80"))
 
   config :assistant_link, AssistantLink.Repo,
@@ -87,8 +129,8 @@ if config_env() == :prod do
     # when the database is on a private network, such as the Postgres container in deploy/docker-compose.yml.
     ssl: System.get_env("DATABASE_SSL", "true") not in ~w(false 0),
     url: database_url,
-    # Small default so the service fits within the connection limits of small hosted Postgres plans.
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5"),
+    # Small default so the service fits within the connection limits of small hosted Postgres plans.
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
     socket_options: maybe_ipv6
@@ -142,8 +184,8 @@ if config_env() == :prod do
     config :assistant_link, AssistantLink.Links.WakeNotifier, from: from
   end
 
-  # Wake emails go out through Resend. Without RESEND_API_KEY each send fails and is logged.
   config :assistant_link, AssistantLink.Mailer,
+    # Wake emails go out through Resend. Without RESEND_API_KEY each send fails and is logged.
     adapter: Swoosh.Adapters.Resend,
     api_key: System.get_env("RESEND_API_KEY")
 end

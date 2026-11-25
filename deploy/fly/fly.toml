@@ -3,6 +3,8 @@
 app = '<your-app-name>'
 primary_region = '<region>'
 kill_signal = 'SIGTERM'
+# Lets active voice calls end before a deploy stops the machine.
+kill_timeout = '5m'
 
 [deploy]
   release_command = '/app/bin/migrate'
@@ -31,6 +33,16 @@ kill_signal = 'SIGTERM'
     method = 'GET'
     path = '/health'
     timeout = '5s'
+
+# Voice calls (see deploy/SELF_HOSTING.md): a dedicated IPv4, WEBRTC_LISTEN_HOST = 'fly-global-services',
+# WEBRTC_PUBLIC_IP and WEBRTC_PORT_RANGE in [env], min_machines_running = 1, and one block like this per port.
+#
+# [[services]]
+#   protocol = 'udp'
+#   internal_port = 50000
+#
+#   [[services.ports]]
+#     port = 50000
 
 [[vm]]
   cpu_kind = 'shared'

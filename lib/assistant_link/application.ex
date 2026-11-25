@@ -19,17 +19,17 @@ defmodule AssistantLink.Application do
       {DynamicSupervisor, name: AssistantLink.Delivery.Supervisor, strategy: :one_for_one},
       {Task.Supervisor, name: AssistantLinkWeb.Webhook.Supervisor},
       {Finch, name: AssistantLink.Push.Finch, pools: %{default: [protocols: [:http2]]}},
-      {Task.Supervisor, name: AssistantLink.Push.Supervisor}
+      {Task.Supervisor, name: AssistantLink.Push.Supervisor},
+      {Registry, keys: :unique, name: AssistantLink.Voice.Registry},
+      {DynamicSupervisor, name: AssistantLink.Voice.Supervisor, strategy: :one_for_one}
     ]
 
     children =
       children ++
         @purgers ++
         [
-          # Start a worker by calling: AssistantLink.Worker.start_link(arg)
-          # {AssistantLink.Worker, arg},
-          # Start to serve requests, typically the last entry
-          AssistantLinkWeb.Endpoint
+          AssistantLinkWeb.Endpoint,
+          AssistantLink.Voice.Drain
         ]
 
     opts = [strategy: :one_for_one, name: AssistantLink.Supervisor]

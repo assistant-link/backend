@@ -26,9 +26,9 @@ ARG RUNNER_IMAGE="docker.io/debian:${DEBIAN_VERSION}"
 
 FROM ${BUILDER_IMAGE} AS builder
 
-# install build dependencies
+# install build dependencies; pkg-config, libssl-dev and cargo build the WebRTC NIFs
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends build-essential git \
+  && apt-get install -y --no-install-recommends build-essential git pkg-config libssl-dev cargo \
   && rm -rf /var/lib/apt/lists/*
 
 # prepare build dir
