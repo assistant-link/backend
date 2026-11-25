@@ -21,7 +21,12 @@ defmodule AssistantLink.EventsMigrationTest do
     Code.put_compiler_option(:ignore_module_conflict, true)
     [{module, _binary}] = Code.compile_file(@migration)
     Code.put_compiler_option(:ignore_module_conflict, ignore)
-    %{migration: module, reply_to: MigrationHelper.load("20261124080907_add_assistant_events_reply_to.exs")}
+
+    %{
+      migration: module,
+      reply_to: MigrationHelper.load("20261124080907_add_assistant_events_reply_to.exs"),
+      calls: MigrationHelper.load("20261125155406_create_calls.exs")
+    }
   end
 
   # Without the migration lock, which would hold the one shared sandbox connection the migration needs.
@@ -29,8 +34,9 @@ defmodule AssistantLink.EventsMigrationTest do
     Ecto.Migrator.run(Repo, [{@version, module}], direction, all: true, log: false, migration_lock: false)
   end
 
-  # The reply_to key depends on the events table's unique index, so it goes first.
-  defp roll_back(%{migration: migration, reply_to: reply_to}) do
+  # The reply_to and calls keys depend on the events table's unique index, so they go first.
+  defp roll_back(%{migration: migration, reply_to: reply_to, calls: calls}) do
+    MigrationHelper.migrate(calls, :down)
     MigrationHelper.migrate(reply_to, :down)
     migrate(migration, :down)
   end

@@ -24,7 +24,7 @@ defmodule AssistantLink.Assistants do
             join: a in Assistant,
             on: a.id == e.assistant_id and a.last_event_seq == e.seq,
             where: a.account_id == ^account_id,
-            preload: :text_message
+            preload: [:text_message, :call]
         ),
         &{&1.assistant_id, &1}
       )

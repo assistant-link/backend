@@ -1,0 +1,166 @@
+defmodule AssistantLinkWeb.API.CallControllerTest do
+  use AssistantLinkWeb.ConnCase, async: true
+
+  import AssistantLink.LinksFixtures
+  import Ecto.Query, only: [from: 2]
+
+  alias AssistantLink.Accounts
+  alias AssistantLink.Calls.Call
+  alias AssistantLink.Events
+  alias AssistantLink.Events.Event
+  alias AssistantLink.Repo
+
+  setup :register_device
+
+  setup %{scope: scope, account: account} do
+    {link, _token} = paired_link_fixture(scope)
+    :ok = Accounts.subscribe(account.id)
+    %{assistant: Repo.preload(link, :assistant).assistant}
+  end
+
+  defp start_call(conn, assistant_id, params \\ %{}),
+    do: post(conn, ~p"/api/v1/assistants/#{assistant_id}/calls", params)
+
+  defp end_call(conn, assistant_id, id), do: post(conn, ~p"/api/v1/assistants/#{assistant_id}/calls/#{id}/end")
+
+  defp error_code(conn, status), do: json_response(conn, status)["error"]["code"]
+
+  defp events(conn, assistant_id),
+    do: conn |> get(~p"/api/v1/assistants/#{assistant_id}/events") |> json_response(200) |> Map.fetch!("events")
+
+  defp age(call_id, minutes) do
+    started_at = DateTime.shift(DateTime.utc_now(), minute: -minutes)
+    Repo.update_all(from(c in Call, where: c.id == ^call_id), set: [started_at: started_at])
+  end
+
+  describe "POST /api/v1/assistants/:assistant_id/calls" do
+    test "starts a realtime relay call with a voice_call and a call_started event",
+         %{conn: conn, assistant: assistant} do
+      assistant_id = assistant.id
+
+      assert %{"call" => %{"id" => id, "started_at" => started_at} = call} =
+               conn |> start_call(assistant.id) |> json_response(201)
+
+      assert call == %{
+               "id" => id,
+               "assistant_id" => assistant_id,
+               "mode" => "realtime_relay",
+               "started_at" => started_at,
+               "ended_at" => nil,
+               "ended_by" => nil
+             }
+
+      assert [_link_created, voice_call, call_started] = events(conn, assistant.id)
+
+      assert %{
+               "type" => "voice_call",
+               "sender" => "system",
+               "voice_call" => %{
+                 "call_id" => ^id,
+                 "mode" => "realtime_relay",
+                 "started_at" => ^started_at,
+                 "ended_at" => nil,
+                 "duration_seconds" => nil,
+                 "transcript_url" => transcript_url
+               }
+             } = voice_call
+
+      assert transcript_url == AssistantLinkWeb.Endpoint.url() <> "/alp/v1/calls/#{id}/transcript"
+      refute Map.has_key?(voice_call, "delivery_status")
+      assert %{"type" => "call_started", "sender" => "user"} = call_started
+
+      assert_receive {:event_created, %Event{type: :voice_call}}
+      assert_receive {:event_created, %Event{type: :call_started}}
+      assert Events.on_call?(assistant.id)
+    end
+
+    test "takes a native mode and rejects an unknown one", %{conn: conn, assistant: assistant} do
+      assert error_code(start_call(conn, assistant.id, %{"mode" => "phone"}), 422) == "invalid_params"
+      assert conn |> start_call(assistant.id, %{"mode" => "native"}) |> json_response(201)
+      assert [%Call{mode: :native}] = Repo.all(Call)
+    end
+
+    test "answers 409 while the Assistant has an open call", %{conn: conn, assistant: assistant} do
+      conn |> start_call(assistant.id) |> json_response(201)
+
+      assert error_code(start_call(conn, assistant.id), 409) == "call_already_ended"
+      assert json_response(start_call(conn, assistant.id), 409)["error"]["message"] =~ "already on a call"
+      assert Repo.aggregate(Call, :count) == 1
+    end
+
+    test "ends an open call over an hour old as the system's and starts a new one",
+         %{conn: conn, assistant: assistant} do
+      old_id = conn |> start_call(assistant.id) |> json_response(201) |> get_in(["call", "id"])
+      age(old_id, 61)
+
+      new_id = conn |> start_call(assistant.id) |> json_response(201) |> get_in(["call", "id"])
+
+      assert %Call{ended_by: :system, ended_at: %DateTime{}} = Repo.get!(Call, old_id)
+      assert %Call{ended_at: nil} = Repo.get!(Call, new_id)
+      assert_receive {:event_updated, %Event{type: :voice_call, call: %Call{id: ^old_id, ended_by: :system}}}
+    end
+
+    test "another account's Assistant is 404", %{conn: conn} do
+      {:ok, %{credential: credential}} = Accounts.register_device()
+      {link, _token} = paired_link_fixture(Accounts.get_scope_by_device_token(credential))
+
+      assert error_code(start_call(conn, link.assistant_id), 404) == "not_found"
+    end
+  end
+
+  describe "GET /api/v1/assistants/:assistant_id/calls/:id" do
+    test "shows the call", %{conn: conn, assistant: assistant} do
+      %{"call" => call} = conn |> start_call(assistant.id) |> json_response(201)
+
+      assert conn |> get(~p"/api/v1/assistants/#{assistant.id}/calls/#{call["id"]}") |> json_response(200) ==
+               %{"call" => call}
+    end
+
+    test "an unknown call or another Assistant's is 404 call_not_found", %{
+      conn: conn,
+      scope: scope,
+      assistant: assistant
+    } do
+      {other, _token} = paired_link_fixture(scope, "Athena")
+      %{"call" => call} = conn |> start_call(other.assistant_id) |> json_response(201)
+
+      for id <- [call["id"], Ecto.UUID.generate(), "abc"] do
+        assert error_code(get(conn, ~p"/api/v1/assistants/#{assistant.id}/calls/#{id}"), 404) == "call_not_found"
+      end
+    end
+  end
+
+  describe "POST /api/v1/assistants/:assistant_id/calls/:id/end" do
+    test "ends the call as the user's, updating the voice_call and storing call_ended",
+         %{conn: conn, assistant: assistant} do
+      %{"call" => %{"id" => id}} = conn |> start_call(assistant.id) |> json_response(201)
+      age(id, 2)
+
+      assert %{"call" => %{"id" => ^id, "ended_at" => ended_at, "ended_by" => "user"}} =
+               conn |> end_call(assistant.id, id) |> json_response(200)
+
+      assert {:ok, _ended_at, 0} = DateTime.from_iso8601(ended_at)
+      refute Events.on_call?(assistant.id)
+
+      assert [_link_created, voice_call, _started, call_ended] = events(conn, assistant.id)
+      assert %{"ended_at" => ^ended_at, "duration_seconds" => duration} = voice_call["voice_call"]
+      assert duration in 119..121
+      assert %{"type" => "call_ended", "sender" => "user"} = call_ended
+
+      assert_receive {:event_updated, %Event{type: :voice_call, call: %Call{id: ^id, ended_by: :user}}}
+      assert_receive {:event_created, %Event{type: :call_ended, sender: :user}}
+    end
+
+    test "answers 409 call_already_ended for an ended call", %{conn: conn, assistant: assistant} do
+      %{"call" => %{"id" => id}} = conn |> start_call(assistant.id) |> json_response(201)
+      conn |> end_call(assistant.id, id) |> json_response(200)
+
+      assert error_code(end_call(conn, assistant.id, id), 409) == "call_already_ended"
+      assert Repo.aggregate(from(e in Event, where: e.type == :call_ended), :count) == 1
+    end
+
+    test "an unknown call is 404 call_not_found", %{conn: conn, assistant: assistant} do
+      assert error_code(end_call(conn, assistant.id, Ecto.UUID.generate()), 404) == "call_not_found"
+    end
+  end
+end

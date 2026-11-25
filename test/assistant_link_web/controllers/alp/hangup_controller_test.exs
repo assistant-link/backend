@@ -5,6 +5,7 @@ defmodule AssistantLinkWeb.ALP.HangupControllerTest do
   import Ecto.Query, only: [from: 2]
 
   alias AssistantLink.Accounts
+  alias AssistantLink.Calls.Call
   alias AssistantLink.Events
   alias AssistantLink.Events.Event
   alias AssistantLink.Links
@@ -46,6 +47,8 @@ defmodule AssistantLinkWeb.ALP.HangupControllerTest do
       link_id = link.id
       assert %Event{type: :call_ended, sender: :assistant, link_id: ^link_id} = Repo.get!(Event, id)
       assert_receive {:event_created, %Event{id: ^id, type: :call_ended}}
+      assert_receive {:event_updated, %Event{type: :voice_call, call: %Call{ended_by: :assistant}}}
+      assert [%Call{ended_by: :assistant, ended_at: %DateTime{}}] = Repo.all(Call)
       refute Events.on_call?(link.assistant_id)
       assert Links.status(link) == :offline
       assert Repo.reload!(link).last_active_at == nil
@@ -70,11 +73,9 @@ defmodule AssistantLinkWeb.ALP.HangupControllerTest do
       assert call_ended_count() == 1
     end
 
-    test "answers 409 not_on_call for a call_started over an hour old", %{conn: conn, scope: scope, link: link} do
-      scope
-      |> start_call(link)
-      |> Ecto.Changeset.change(inserted_at: DateTime.shift(DateTime.utc_now(), minute: -61))
-      |> Repo.update!()
+    test "answers 409 not_on_call for a call started over an hour old", %{conn: conn, scope: scope, link: link} do
+      start_call(scope, link)
+      Repo.update_all(Call, set: [started_at: DateTime.shift(DateTime.utc_now(), minute: -61)])
 
       assert error_code(hang_up(conn), 409) == "not_on_call"
       assert call_ended_count() == 0

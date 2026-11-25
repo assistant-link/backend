@@ -1,4 +1,7 @@
 defmodule AssistantLinkWeb.API.EventJSON do
+  alias AssistantLink.Calls.Call
+  alias AssistantLinkWeb.API.CallJSON
+
   def index(%{events: events, has_more: has_more}), do: %{events: Enum.map(events, &event/1), has_more: has_more}
 
   def show(%{event: event}), do: %{event: event(event)}
@@ -32,5 +35,6 @@ defmodule AssistantLinkWeb.API.EventJSON do
 
   defp payload(%{text_message: %{text: text, via: nil}}), do: %{text_message: %{text: text}}
   defp payload(%{text_message: %{text: text, via: via}}), do: %{text_message: %{text: text, via: via}}
+  defp payload(%{type: :voice_call, call: %Call{} = call}), do: %{voice_call: CallJSON.voice_call(call)}
   defp payload(_event), do: %{}
 end
