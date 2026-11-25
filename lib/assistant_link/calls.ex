@@ -24,11 +24,12 @@ defmodule AssistantLink.Calls do
 
   @doc """
   Starts a call with one of the scope's Assistants. Params are an optional `"mode"`, `"realtime_relay"`
-  (the default) or `"native"`. An open call from the last #{@call_window_minutes} minutes is
-  `{:error, :already_on_call}`; an older one is ended as the system's first.
+  (the default) or `"native"`. Returns the new call with its `call_started` event. An open call from the last
+  #{@call_window_minutes} minutes is returned as `{:ok, call, :existing}`, so a repeated request gets the call it
+  started; an older one is ended as the system's first.
   """
   @spec start_call(Scope.t(), String.t(), map()) ::
-          {:ok, Call.t(), Event.t()} | {:error, :not_found | :invalid_params | :already_on_call}
+          {:ok, Call.t(), Event.t() | :existing} | {:error, :not_found | :invalid_params}
   def start_call(%Scope{} = scope, assistant_id, params) do
     with %Assistant{} = assistant <- Assistants.get_assistant(scope, assistant_id),
          {:ok, mode} <- cast_mode(params["mode"]),
@@ -49,8 +50,10 @@ defmodule AssistantLink.Calls do
   defp insert_call(assistant, mode) do
     lock_assistant(assistant.id)
 
-    if on_call?(assistant.id) do
-      {:error, :already_on_call}
+    call = open_call(assistant.id)
+
+    if current?(call) do
+      {:ok, {call, :existing, []}}
     else
       {:ok, ended} = end_open_call(assistant.id, :system)
       template = %Event{account_id: assistant.account_id, assistant_id: assistant.id, sender: :user}

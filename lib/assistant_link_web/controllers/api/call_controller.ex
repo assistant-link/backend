@@ -7,12 +7,19 @@ defmodule AssistantLinkWeb.API.CallController do
   action_fallback AssistantLinkWeb.API.FallbackController
 
   def create(conn, %{"assistant_id" => assistant_id} = params) do
-    with {:ok, call, call_started} <- Calls.start_call(conn.assigns.current_scope, assistant_id, params) do
-      Webhook.notify(call_started)
+    case Calls.start_call(conn.assigns.current_scope, assistant_id, params) do
+      {:ok, call, :existing} ->
+        render(conn, :show, call: call)
 
-      conn
-      |> put_status(:created)
-      |> render(:show, call: call)
+      {:ok, call, call_started} ->
+        Webhook.notify(call_started)
+
+        conn
+        |> put_status(:created)
+        |> render(:show, call: call)
+
+      error ->
+        error
     end
   end
 

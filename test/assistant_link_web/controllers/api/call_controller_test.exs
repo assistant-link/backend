@@ -80,12 +80,18 @@ defmodule AssistantLinkWeb.API.CallControllerTest do
       assert [%Call{mode: :native}] = Repo.all(Call)
     end
 
-    test "answers 409 while the Assistant has an open call", %{conn: conn, assistant: assistant} do
-      conn |> start_call(assistant.id) |> json_response(201)
+    test "returns the open call while the Assistant has one", %{conn: conn, assistant: assistant} do
+      %{"call" => call} = conn |> start_call(assistant.id) |> json_response(201)
+      assert_receive {:event_created, %Event{type: :voice_call}}
+      assert_receive {:event_created, %Event{type: :call_started}}
+      events = events(conn, assistant.id)
 
-      assert error_code(start_call(conn, assistant.id), 409) == "call_already_ended"
-      assert json_response(start_call(conn, assistant.id), 409)["error"]["message"] =~ "already on a call"
+      assert conn |> start_call(assistant.id) |> json_response(200) == %{"call" => call}
+      assert conn |> start_call(assistant.id, %{"mode" => "native"}) |> json_response(200) == %{"call" => call}
       assert Repo.aggregate(Call, :count) == 1
+      assert events(conn, assistant.id) == events
+      refute_received {:event_created, _event}
+      refute_received {:event_updated, _event}
     end
 
     test "ends an open call over an hour old as the system's and starts a new one",
