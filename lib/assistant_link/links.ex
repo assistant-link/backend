@@ -394,6 +394,19 @@ defmodule AssistantLink.Links do
 
   def show_wake_email(%Link{} = link), do: %{address: link.wake_email, confirmed: link.wake_email_confirmed_at != nil}
 
+  @doc "Whether the Link has a webhook."
+  @spec webhook_installed?(Link.t()) :: boolean()
+  def webhook_installed?(%Link{webhook_url: url}), do: url != nil
+
+  @doc """
+  How the Link is woken: `:webhook` when it has one, even alongside a confirmed wake email, as
+  `AssistantLinkWeb.Webhook` prefers it; `:email` when its wake email is confirmed; otherwise `nil`.
+  """
+  @spec wake_route(Link.t()) :: :webhook | :email | nil
+  def wake_route(%Link{webhook_url: url}) when url != nil, do: :webhook
+  def wake_route(%Link{wake_email_confirmed_at: confirmed_at}) when confirmed_at != nil, do: :email
+  def wake_route(%Link{}), do: nil
+
   defp announce_wake_change({:ok, link} = result) do
     status = status(link)
     if status in [:idle, :offline], do: announce_status(link, status)

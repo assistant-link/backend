@@ -169,14 +169,20 @@ defmodule AssistantLinkWeb.API.AssistantControllerTest do
                  "label" => nil,
                  "status" => "offline",
                  "last_active_at" => "2026-10-05T12:00:00.000000Z",
-                 "activity" => nil
+                 "activity" => nil,
+                 "webhook_installed" => false,
+                 "wake_email" => nil,
+                 "wake_route" => nil
                },
                %{
                  "id" => unpaired.id,
                  "label" => "spare",
                  "status" => "not_paired",
                  "last_active_at" => nil,
-                 "activity" => nil
+                 "activity" => nil,
+                 "webhook_installed" => false,
+                 "wake_email" => nil,
+                 "wake_route" => nil
                }
              ] == links
     end
@@ -207,6 +213,49 @@ defmodule AssistantLinkWeb.API.AssistantControllerTest do
 
       assert [%{"id" => idle.id, "status" => "idle"}, %{"id" => offline.id, "status" => "offline"}] ==
                Enum.map(links, &Map.take(&1, ["id", "status"]))
+    end
+
+    test "each Link says how it is woken, and never shows its webhook", %{conn: conn, scope: scope} do
+      {:ok, assistant} = Assistants.create_assistant(scope, %{"name" => "Hermes", "avatar" => "avatar-1"})
+      now = DateTime.utc_now()
+      hook = %{webhook_url: "https://hook.test/secret-path?token=t0k3n", webhook_authorization: "Bearer s3cr3t"}
+      confirmed = %{wake_email: "a@example.com", wake_email_confirmed_at: now}
+
+      webhook = paired_link(scope, assistant, hook)
+      email = paired_link(scope, assistant, confirmed)
+      both = paired_link(scope, assistant, Map.merge(hook, confirmed))
+      pending = paired_link(scope, assistant, %{wake_email: "b@example.com"})
+      neither = paired_link(scope, assistant)
+
+      body = conn |> get(~p"/api/v1/assistants") |> response(200)
+      [%{"links" => links}] = body |> Jason.decode!() |> Map.fetch!("assistants")
+      fields = ["id", "webhook_installed", "wake_email", "wake_route"]
+
+      assert [
+               %{"id" => webhook.id, "webhook_installed" => true, "wake_email" => nil, "wake_route" => "webhook"},
+               %{
+                 "id" => email.id,
+                 "webhook_installed" => false,
+                 "wake_email" => %{"address" => "a@example.com", "confirmed" => true},
+                 "wake_route" => "email"
+               },
+               %{
+                 "id" => both.id,
+                 "webhook_installed" => true,
+                 "wake_email" => %{"address" => "a@example.com", "confirmed" => true},
+                 "wake_route" => "webhook"
+               },
+               %{
+                 "id" => pending.id,
+                 "webhook_installed" => false,
+                 "wake_email" => %{"address" => "b@example.com", "confirmed" => false},
+                 "wake_route" => nil
+               },
+               %{"id" => neither.id, "webhook_installed" => false, "wake_email" => nil, "wake_route" => nil}
+             ] == Enum.map(links, &Map.take(&1, fields))
+
+      for link <- links, do: refute(Map.has_key?(link, "webhook_url") or Map.has_key?(link, "webhook_authorization"))
+      for secret <- ["hook.test", "secret-path", "t0k3n", "Bearer", "s3cr3t"], do: refute(body =~ secret)
     end
 
     test "a connected Link with a webhook is online", %{conn: conn, scope: scope} do
