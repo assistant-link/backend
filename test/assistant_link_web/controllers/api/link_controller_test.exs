@@ -24,8 +24,17 @@ defmodule AssistantLinkWeb.API.LinkControllerTest do
     test "creates an unpaired Link with a label", %{conn: conn, assistant: assistant} do
       conn = post(conn, ~p"/api/v1/assistants/#{assistant.id}/links", %{"label" => "laptop"})
 
-      assert %{"link" => %{"id" => _, "label" => "laptop", "status" => "not_paired", "last_active_at" => nil}} =
-               json_response(conn, 201)
+      assert %{
+               "link" => %{
+                 "id" => _,
+                 "label" => "laptop",
+                 "status" => "not_paired",
+                 "last_active_at" => nil,
+                 "webhook_installed" => false,
+                 "wake_email" => nil,
+                 "wake_route" => nil
+               }
+             } = json_response(conn, 201)
     end
 
     test "stores a link_created event for the Link, and none for a rejected one", %{conn: conn, assistant: assistant} do
