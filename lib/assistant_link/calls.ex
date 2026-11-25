@@ -206,15 +206,30 @@ defmodule AssistantLink.Calls do
   def update_transcript_entry(%Scope{} = scope, assistant_id, call_id, id, params) do
     with {:ok, call} <- get_call(scope, assistant_id, call_id),
          {:ok, uuid} <- Ecto.UUID.cast(id),
-         %TranscriptEntry{} = entry <- Repo.get_by(TranscriptEntry, id: uuid, call_id: call.id),
-         {:ok, entry} <- entry |> TranscriptEntry.update_changeset(params) |> Repo.update() do
-      broadcast(call.account_id, [{:call_transcript_entry, entry}])
-      {:ok, entry}
+         %TranscriptEntry{} = entry <- Repo.get_by(TranscriptEntry, id: uuid, call_id: call.id) do
+      change_transcript_entry(entry, params)
     else
-      {:error, %Changeset{}} = error -> error
       {:error, :call_not_found} = error -> error
       {:error, :not_found} = error -> error
       _unknown_entry -> {:error, :not_found}
+    end
+  end
+
+  @doc """
+  Saves a transcript entry the voice agent recognized or spoke, with the call's next `seq`. Attrs are those of
+  `create_transcript_entry/4` without `"id"`.
+  """
+  @spec add_transcript_entry(Call.t(), map()) :: {:ok, TranscriptEntry.t()} | {:error, Changeset.t()}
+  def add_transcript_entry(%Call{} = call, attrs) do
+    with {:ok, entry, :created} <- insert_entry(call, nil, attrs), do: {:ok, entry}
+  end
+
+  @doc "Updates the text and `ended_at` of a transcript entry, as `update_transcript_entry/5` does."
+  @spec change_transcript_entry(TranscriptEntry.t(), map()) :: {:ok, TranscriptEntry.t()} | {:error, Changeset.t()}
+  def change_transcript_entry(%TranscriptEntry{} = entry, attrs) do
+    with {:ok, entry} <- entry |> TranscriptEntry.update_changeset(attrs) |> Repo.update() do
+      broadcast(entry.account_id, [{:call_transcript_entry, entry}])
+      {:ok, entry}
     end
   end
 
@@ -269,9 +284,11 @@ defmodule AssistantLink.Calls do
   defp open_call(assistant_id),
     do: Repo.one(from c in Call, where: c.assistant_id == ^assistant_id and is_nil(c.ended_at))
 
-  defp current?(%Call{started_at: started_at}),
-    do: DateTime.after?(started_at, DateTime.shift(DateTime.utc_now(), minute: -@call_window_minutes))
+  @doc "When an open call stops counting as current: #{@call_window_minutes} minutes after it started."
+  @spec window_end(Call.t()) :: DateTime.t()
+  def window_end(%Call{started_at: started_at}), do: DateTime.shift(started_at, minute: @call_window_minutes)
 
+  defp current?(%Call{} = call), do: DateTime.after?(window_end(call), DateTime.utc_now())
   defp current?(nil), do: false
 
   defp close(call, ended_by) do
@@ -293,7 +310,7 @@ defmodule AssistantLink.Calls do
         )
 
       # Entry times come from the app, so keep them inside the call.
-      ended_at = last_spoken || DateTime.shift(call.started_at, minute: @call_window_minutes)
+      ended_at = last_spoken || window_end(call)
       Enum.min([Enum.max([ended_at, call.started_at], DateTime), DateTime.utc_now()], DateTime)
     end
   end

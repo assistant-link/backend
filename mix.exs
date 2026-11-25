@@ -59,6 +59,8 @@ defmodule AssistantLink.MixProject do
        github: "saadeghi/daisyui", tag: "v5.5.20", sparse: "packages/bundle", app: false, compile: false, depth: 1},
       {:swoosh, "~> 1.16"},
       {:req, "~> 0.5"},
+      {:ex_webrtc, "~> 0.18.0"},
+      {:ex_sctp, "~> 0.1.3"},
       {:finch, "~> 0.19"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},

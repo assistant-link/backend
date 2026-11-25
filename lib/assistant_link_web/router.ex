@@ -80,6 +80,7 @@ defmodule AssistantLinkWeb.Router do
     post "/assistants/:assistant_id/calls", CallController, :create
     get "/assistants/:assistant_id/calls/:id", CallController, :show
     post "/assistants/:assistant_id/calls/:id/end", CallController, :hang_up
+    post "/assistants/:assistant_id/calls/:id/webrtc", CallController, :webrtc
     get "/assistants/:assistant_id/calls/:call_id/transcript", TranscriptEntryController, :index
     post "/assistants/:assistant_id/calls/:call_id/transcript_entries", TranscriptEntryController, :create
     patch "/assistants/:assistant_id/calls/:call_id/transcript_entries/:id", TranscriptEntryController, :update

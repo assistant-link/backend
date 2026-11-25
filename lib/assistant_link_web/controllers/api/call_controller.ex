@@ -2,6 +2,7 @@ defmodule AssistantLinkWeb.API.CallController do
   use AssistantLinkWeb, :controller
 
   alias AssistantLink.Calls
+  alias AssistantLink.Voice
   alias AssistantLinkWeb.Webhook
 
   action_fallback AssistantLinkWeb.API.FallbackController
@@ -32,6 +33,12 @@ defmodule AssistantLinkWeb.API.CallController do
   def hang_up(conn, %{"assistant_id" => assistant_id, "id" => id}) do
     with {:ok, call} <- Calls.end_call(conn.assigns.current_scope, assistant_id, id) do
       render(conn, :show, call: call)
+    end
+  end
+
+  def webrtc(conn, %{"assistant_id" => assistant_id, "id" => id} = params) do
+    with {:ok, answer} <- Voice.connect(conn.assigns.current_scope, assistant_id, id, params["offer"]) do
+      render(conn, :webrtc, answer: answer)
     end
   end
 end

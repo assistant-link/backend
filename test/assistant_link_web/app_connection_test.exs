@@ -257,6 +257,28 @@ defmodule AssistantLinkWeb.AppConnectionTest do
       :ok = close(app)
     end
 
+    test "sends the voice agent's transcript entries of a WebRTC call", %{app: app, scope: scope, link: link} do
+      {:ok, %{id: call_id}, _call_started} = Calls.start_call(scope, link.assistant_id, %{})
+      {_pc, _track, offer} = AssistantLink.WebRTCClient.offer()
+      assert {:ok, _answer} = AssistantLink.Voice.connect(scope, link.assistant_id, call_id, offer)
+
+      assert_receive {:ws, ^app,
+                      {:text,
+                       %{
+                         "method" => "call.transcript_entry",
+                         "params" => %{
+                           "transcript_entry" => %{
+                             "call_id" => ^call_id,
+                             "speaker" => "assistant",
+                             "text" => "Hi, this is " <> _name
+                           }
+                         }
+                       }}}
+
+      :ok = AssistantLink.Voice.stop(call_id)
+      :ok = close(app)
+    end
+
     test "sends every connection of the account the event, and no other account", %{
       app: app,
       scope: scope,

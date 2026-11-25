@@ -23,6 +23,8 @@ defmodule AssistantLink do
       Links,
       Links.Link,
       Links.WakeNotifier,
-      Push
+      Push,
+      Voice,
+      Voice.FakeVendor
     ]
 end

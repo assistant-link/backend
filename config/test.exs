@@ -13,6 +13,8 @@ config :assistant_link, AssistantLink.Repo,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 
+config :assistant_link, AssistantLink.Voice, vendor: AssistantLink.Voice.FakeVendor, transcript_pause: 200
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :assistant_link, AssistantLinkWeb.Endpoint,

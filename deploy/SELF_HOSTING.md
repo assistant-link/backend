@@ -71,6 +71,37 @@ database the machine can reach.
    Fly builds the image, runs `bin/migrate` as the release command, then starts the machine. `fly logs` streams the
    service logs.
 
+## Voice calls
+
+The app's voice calls connect to the service over WebRTC, on UDP only, and the service relays them to OpenAI
+GPT-Live. The app never contacts OpenAI. Set `OPENAI_API_KEY` to turn voice on; without it, the rest of the service
+runs as usual and starting a voice chat answers `503` `voice_unavailable`.
+
+The phone sends its audio straight to the service, with no TURN server in between, so:
+
+- The host needs a public IPv4 address that the phone can reach on the UDP ports in `WEBRTC_PORT_RANGE`. Each
+  active call uses one port. The service advertises `WEBRTC_PUBLIC_IP` to the phone.
+- A call lives in the memory of the machine that answered its WebRTC request. Run one machine for voice, so that
+  the HTTP request and the call's UDP traffic both reach it.
+- On shutdown, as in a deploy, the service takes no new calls and waits up to 280 seconds for active ones to
+  end. Give the platform's stop timeout at least 300 seconds.
+
+With Docker Compose on a host with a public IP, publish the UDP range next to port 4000 (for example
+`"50000-50019:50000-50019/udp"`) and set `WEBRTC_PUBLIC_IP` and `WEBRTC_PORT_RANGE` to match.
+
+On Fly.io:
+
+1. Allocate a dedicated IPv4 address with `fly ips allocate-v4`. Shared IPv4 addresses do not carry UDP.
+2. Set `WEBRTC_LISTEN_HOST = 'fly-global-services'`, `WEBRTC_PUBLIC_IP` (the dedicated address) and
+   `WEBRTC_PORT_RANGE` in `[env]`, and `fly secrets set OPENAI_API_KEY=...`. Fly delivers UDP only to sockets
+   bound to `fly-global-services`.
+3. Add one UDP service per port in the range, with the same port inside and out, as in the commented block of
+   [`fly/fly.toml`](fly/fly.toml).
+4. Keep the machine running during calls: UDP traffic does not count as a connection for Fly's auto-stop, so set
+   `min_machines_running = 1` (or `auto_stop_machines = 'off'`), and keep one machine with `fly scale count 1`.
+5. Keep `kill_timeout = '5m'` from the template, so a deploy lets active calls end first. With one machine, the
+   service takes no new requests while it waits.
+
 ## Environment variables
 
 The release reads these at boot ([`config/runtime.exs`](../config/runtime.exs)). Dev and test need none of them.
@@ -95,5 +126,10 @@ The release reads these at boot ([`config/runtime.exs`](../config/runtime.exs)).
 | `APNS_TEAM_ID`      | with key |                            | Apple Developer team ID that owns the key.                                                |
 | `APNS_TOPIC`        | no       | `ai.assistantlink.app`     | Bundle ID of the app that receives the pushes.                                            |
 | `APNS_ENV`          | no       | `production`               | `production` (App Store and TestFlight builds) or `sandbox` (builds run from Xcode).      |
+| `OPENAI_API_KEY`    | no       | none                       | OpenAI API key for voice calls. Without it, each voice chat answers `voice_unavailable`.   |
+| `WEBRTC_PUBLIC_IP`  | for voice | none                      | Public IPv4 address the phone sends call audio to.                                         |
+| `WEBRTC_PORT_RANGE` | for voice | any free port             | UDP ports for call audio, such as `50000-50019`; one per active call.                      |
+| `WEBRTC_LISTEN_HOST`| no       | every interface            | Host whose address the call audio is received on. On Fly.io, `fly-global-services`.        |
 
-Keep `DATABASE_URL`, `SECRET_KEY_BASE`, `RESEND_API_KEY` and `APNS_KEY_P8` in your platform's secret store, never in the repository.
+Keep `DATABASE_URL`, `SECRET_KEY_BASE`, `RESEND_API_KEY`, `APNS_KEY_P8` and `OPENAI_API_KEY` in your platform's secret
+store, never in the repository.

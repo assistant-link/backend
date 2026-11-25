@@ -60,6 +60,10 @@ defmodule AssistantLinkWeb.API.FallbackController do
     APIError.send_error(conn, 409, "call_already_ended", "This call has already ended.")
   end
 
+  def call(conn, {:error, :voice_unavailable}) do
+    APIError.send_error(conn, 503, "voice_unavailable", "The voice chat could not start. Try again in a moment.")
+  end
+
   def call(conn, {:error, :idempotency_key_conflict}) do
     APIError.send_error(conn, 409, "idempotency_key_conflict", "This idempotency key was used for another request.")
   end

@@ -39,6 +39,48 @@ if config_env() != :test and System.get_env("APNS_KEY_P8") not in [nil, ""] do
     env: apns_env
 end
 
+# Voice calls. Without OPENAI_API_KEY each call's WebRTC offer gets `voice_unavailable`; nothing else changes.
+if config_env() != :test do
+  port_range =
+    case System.get_env("WEBRTC_PORT_RANGE", "") do
+      "" ->
+        nil
+
+      range ->
+        with [_range, first, last] <- Regex.run(~r/\A(\d+)-(\d+)\z/, range),
+             {first, last} when first in 1..65_535 and last in first..65_535//1 <-
+               {String.to_integer(first), String.to_integer(last)} do
+          first..last//1
+        else
+          _invalid -> raise "WEBRTC_PORT_RANGE must look like 50000-50099, got: #{inspect(range)}"
+        end
+    end
+
+  public_ip =
+    case System.get_env("WEBRTC_PUBLIC_IP", "") do
+      "" ->
+        nil
+
+      ip ->
+        case :inet.parse_ipv4strict_address(String.to_charlist(ip)) do
+          {:ok, ip} -> ip
+          {:error, _reason} -> raise "WEBRTC_PUBLIC_IP must be an IPv4 address, got: #{inspect(ip)}"
+        end
+    end
+
+  config :assistant_link, AssistantLink.Voice,
+    listen_host: System.get_env("WEBRTC_LISTEN_HOST"),
+    public_ip: public_ip,
+    port_range: port_range,
+    drain_timeout: if(config_env() == :prod, do: to_timeout(second: 280), else: 0)
+
+  config :assistant_link, AssistantLink.Voice.OpenAI, api_key: System.get_env("OPENAI_API_KEY")
+end
+
+if config_env() == :dev and System.get_env("VOICE_VENDOR") == "fake" do
+  config :assistant_link, AssistantLink.Voice, vendor: AssistantLink.Voice.FakeVendor
+end
+
 if config_env() == :dev do
   config :assistant_link, AssistantLinkWeb.Endpoint,
     live_reload: [

@@ -3,6 +3,8 @@ defmodule AssistantLinkWeb.API.CallJSON do
 
   def show(%{call: call}), do: %{call: call(call)}
 
+  def webrtc(%{answer: answer}), do: %{answer: answer}
+
   def call(call) do
     %{
       id: call.id,
