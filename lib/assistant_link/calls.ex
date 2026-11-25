@@ -284,9 +284,11 @@ defmodule AssistantLink.Calls do
   defp open_call(assistant_id),
     do: Repo.one(from c in Call, where: c.assistant_id == ^assistant_id and is_nil(c.ended_at))
 
-  defp current?(%Call{started_at: started_at}),
-    do: DateTime.after?(started_at, DateTime.shift(DateTime.utc_now(), minute: -@call_window_minutes))
+  @doc "When an open call stops counting as current: #{@call_window_minutes} minutes after it started."
+  @spec window_end(Call.t()) :: DateTime.t()
+  def window_end(%Call{started_at: started_at}), do: DateTime.shift(started_at, minute: @call_window_minutes)
 
+  defp current?(%Call{} = call), do: DateTime.after?(window_end(call), DateTime.utc_now())
   defp current?(nil), do: false
 
   defp close(call, ended_by) do
@@ -308,7 +310,7 @@ defmodule AssistantLink.Calls do
         )
 
       # Entry times come from the app, so keep them inside the call.
-      ended_at = last_spoken || DateTime.shift(call.started_at, minute: @call_window_minutes)
+      ended_at = last_spoken || window_end(call)
       Enum.min([Enum.max([ended_at, call.started_at], DateTime), DateTime.utc_now()], DateTime)
     end
   end

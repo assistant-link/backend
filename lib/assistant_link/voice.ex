@@ -23,7 +23,8 @@ defmodule AssistantLink.Voice do
   Answers the app's SDP offer for one of the scope's open calls with an SDP answer and starts relaying the
   call's audio to the voice agent. A new offer for the same call replaces its session.
 
-  Returns `{:error, :voice_unavailable}` when WebRTC or the voice model cannot start.
+  Returns `{:error, :voice_unavailable}` when WebRTC or the voice model cannot start, or the call is past the
+  window `AssistantLink.Calls` keeps it current for.
   """
   @spec connect(Scope.t(), String.t(), String.t(), term()) ::
           {:ok, String.t()}
@@ -52,7 +53,15 @@ defmodule AssistantLink.Voice do
     end
   end
 
-  defp open(%Call{ended_at: nil}), do: :ok
+  defp open(%Call{ended_at: nil} = call) do
+    if DateTime.after?(Calls.window_end(call), DateTime.utc_now()) do
+      :ok
+    else
+      Logger.warning("Voice chat could not start: the call is past its window.")
+      {:error, :voice_unavailable}
+    end
+  end
+
   defp open(%Call{}), do: {:error, :call_already_ended}
 
   defp validate_offer(offer) when is_binary(offer) and byte_size(offer) <= @max_offer_bytes do

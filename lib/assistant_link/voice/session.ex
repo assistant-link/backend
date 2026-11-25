@@ -25,8 +25,8 @@ defmodule AssistantLink.Voice.Session do
   @answer_timeout to_timeout(second: 40)
   @gather_timeout to_timeout(second: 5)
   @connect_timeout to_timeout(second: 30)
-  # An open call older than this counts as abandoned (see AssistantLink.Calls).
-  @max_duration to_timeout(hour: 1)
+  # Ten seconds of 20 ms Opus packets.
+  @max_held_packets 500
   @max_text_length 10_000
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -65,6 +65,8 @@ defmodule AssistantLink.Voice.Session do
        track: nil,
        vendor: nil,
        connected?: false,
+       held: [],
+       held_count: 0,
        entries: %{}
      }}
   end
@@ -76,7 +78,8 @@ defmodule AssistantLink.Voice.Session do
     case negotiate(state, offer) do
       {:ok, answer, state} ->
         Process.send_after(self(), :connect_timeout, @connect_timeout)
-        Process.send_after(self(), :max_duration, @max_duration)
+        remaining = DateTime.diff(Calls.window_end(state.call), DateTime.utc_now(), :millisecond)
+        Process.send_after(self(), :max_duration, max(remaining, 0))
         {:reply, {:ok, answer}, state}
 
       {:error, reason, state} ->
@@ -151,8 +154,10 @@ defmodule AssistantLink.Voice.Session do
     {:noreply, state}
   end
 
-  def handle_info({:ex_webrtc, pc, {:connection_state_change, :connected}}, %{pc: pc} = state),
-    do: {:noreply, %{state | connected?: true}}
+  def handle_info({:ex_webrtc, pc, {:connection_state_change, :connected}}, %{pc: pc} = state) do
+    state.held |> Enum.reverse() |> Enum.each(&play(state, &1))
+    {:noreply, %{state | connected?: true, held: [], held_count: 0}}
+  end
 
   def handle_info({:ex_webrtc, pc, {:connection_state_change, connection}}, %{pc: pc} = state)
       when connection in [:failed, :closed] do
@@ -162,9 +167,19 @@ defmodule AssistantLink.Voice.Session do
 
   def handle_info({:ex_webrtc, _pc, _message}, state), do: {:noreply, state}
 
-  def handle_info({:voice_vendor, vendor, {:audio, packet}}, %{vendor: vendor} = state) do
-    PeerConnection.send_rtp(state.pc, state.track.id, ExRTP.Packet.remove_extensions(packet))
+  def handle_info({:voice_vendor, vendor, {:audio, packet}}, %{vendor: vendor, connected?: true} = state) do
+    play(state, packet)
     {:noreply, state}
+  end
+
+  # The vendor is ready, and may start speaking, before the app has the answer and has connected; packets sent
+  # before then would be dropped, so the greeting waits for the app.
+  def handle_info({:voice_vendor, vendor, {:audio, packet}}, %{vendor: vendor} = state) do
+    if state.held_count < @max_held_packets do
+      {:noreply, %{state | held: [packet | state.held], held_count: state.held_count + 1}}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info({:voice_vendor, _vendor, {:transcript, speaker, text, started_at, ended_at}}, state)
@@ -198,6 +213,9 @@ defmodule AssistantLink.Voice.Session do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp play(state, packet),
+    do: PeerConnection.send_rtp(state.pc, state.track.id, ExRTP.Packet.remove_extensions(packet))
 
   defp transcribe(state, speaker, text, started_at, ended_at) do
     case state.entries do

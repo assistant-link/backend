@@ -2,8 +2,10 @@ defmodule AssistantLinkWeb.API.CallWebRTCTest do
   use AssistantLinkWeb.ConnCase, async: true
 
   import AssistantLink.LinksFixtures
+  import Ecto.Query
 
   alias AssistantLink.Accounts
+  alias AssistantLink.Calls.Call
   alias AssistantLink.Calls.TranscriptEntry
   alias AssistantLink.Repo
   alias AssistantLink.Voice
@@ -25,6 +27,9 @@ defmodule AssistantLinkWeb.API.CallWebRTCTest do
 
   defp error_code(conn, status), do: json_response(conn, status)["error"]["code"]
 
+  defp set_started_at(call_id, started_at),
+    do: {1, nil} = Repo.update_all(from(c in Call, where: c.id == ^call_id), set: [started_at: started_at])
+
   # Stops the session while the test still owns its database connection.
   defp stop_session(call_id) do
     pid = Voice.session(call_id)
@@ -43,6 +48,18 @@ defmodule AssistantLinkWeb.API.CallWebRTCTest do
 
     WebRTCClient.send_audio(pc, track, <<1, 2, 3>>)
     assert_receive {:ex_webrtc, ^pc, {:rtp, _track_id, nil, %ExRTP.Packet{payload: <<1, 2, 3>>}}}, 5_000
+
+    stop_session(call_id)
+  end
+
+  test "plays the voice agent's greeting once the app is connected",
+       %{conn: conn, assistant: assistant, call_id: call_id} do
+    {pc, _track, offer} = WebRTCClient.offer()
+    %{"answer" => answer} = conn |> webrtc(assistant.id, call_id, %{"offer" => offer}) |> json_response(200)
+    greeting = FakeVendor.greeting_audio()
+
+    :ok = WebRTCClient.connect(pc, answer)
+    assert_receive {:ex_webrtc, ^pc, {:rtp, _track_id, nil, %ExRTP.Packet{payload: ^greeting}}}, 5_000
 
     stop_session(call_id)
   end
@@ -116,6 +133,25 @@ defmodule AssistantLinkWeb.API.CallWebRTCTest do
     {_pc, _track, offer} = WebRTCClient.offer()
 
     assert error_code(webrtc(conn, assistant.id, call_id, %{"offer" => offer}), 409) == "call_already_ended"
+    refute Voice.session(call_id)
+  end
+
+  test "stops the session at the end of the call window, not an hour after the offer",
+       %{conn: conn, assistant: assistant, call_id: call_id} do
+    set_started_at(call_id, DateTime.shift(DateTime.utc_now(), second: -60 * 60 + 1))
+    {_pc, _track, offer} = WebRTCClient.offer()
+
+    conn |> webrtc(assistant.id, call_id, %{"offer" => offer}) |> json_response(200)
+    ref = Process.monitor(Voice.session(call_id))
+
+    assert_receive {:DOWN, ^ref, :process, _pid, :normal}, 3_000
+  end
+
+  test "rejects a call past its window", %{conn: conn, assistant: assistant, call_id: call_id} do
+    set_started_at(call_id, DateTime.shift(DateTime.utc_now(), second: -60 * 60 - 1))
+    {_pc, _track, offer} = WebRTCClient.offer()
+
+    assert error_code(webrtc(conn, assistant.id, call_id, %{"offer" => offer}), 503) == "voice_unavailable"
     refute Voice.session(call_id)
   end
 

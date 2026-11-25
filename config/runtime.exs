@@ -86,12 +86,12 @@ if config_env() == :dev do
     live_reload: [
       web_console_logger: true,
       patterns: [
-        ~r"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$"E,
         # Static assets, except user uploads
-        ~r"priv/gettext/.*\.po$"E,
+        ~r"priv/static/(?!uploads/).*\.(js|css|png|jpeg|jpg|gif|svg)$"E,
         # Gettext translations
-        ~r"lib/assistant_link_web/router\.ex$"E,
+        ~r"priv/gettext/.*\.po$"E,
         # Router, Controllers, LiveViews and LiveComponents
+        ~r"lib/assistant_link_web/router\.ex$"E,
         ~r"lib/assistant_link_web/(controllers|live|components)/.*\.(ex|heex)$"E
       ]
     ]
@@ -120,8 +120,8 @@ if config_env() == :prod do
       """
 
   host = System.get_env("PHX_HOST") || "example.com"
-  scheme = System.get_env("PHX_SCHEME", "https")
   # The public URL agents and the app use, which differs from PORT behind a TLS-terminating proxy.
+  scheme = System.get_env("PHX_SCHEME", "https")
   url_port = String.to_integer(System.get_env("PHX_URL_PORT") || if(scheme == "https", do: "443", else: "80"))
 
   config :assistant_link, AssistantLink.Repo,
@@ -129,8 +129,8 @@ if config_env() == :prod do
     # when the database is on a private network, such as the Postgres container in deploy/docker-compose.yml.
     ssl: System.get_env("DATABASE_SSL", "true") not in ~w(false 0),
     url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5"),
     # Small default so the service fits within the connection limits of small hosted Postgres plans.
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5"),
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
     socket_options: maybe_ipv6
@@ -184,8 +184,8 @@ if config_env() == :prod do
     config :assistant_link, AssistantLink.Links.WakeNotifier, from: from
   end
 
+  # Wake emails go out through Resend. Without RESEND_API_KEY each send fails and is logged.
   config :assistant_link, AssistantLink.Mailer,
-    # Wake emails go out through Resend. Without RESEND_API_KEY each send fails and is logged.
     adapter: Swoosh.Adapters.Resend,
     api_key: System.get_env("RESEND_API_KEY")
 end
