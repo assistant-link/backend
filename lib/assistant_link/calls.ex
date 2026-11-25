@@ -24,20 +24,23 @@ defmodule AssistantLink.Calls do
 
   @doc """
   Starts a call with one of the scope's Assistants. Params are an optional `"mode"`, `"realtime_relay"`
-  (the default) or `"native"`. Returns the new call with its `call_started` event. An open call from the last
-  #{@call_window_minutes} minutes is returned as `{:ok, call, :existing}`, so a repeated request gets the call it
-  started; an older one is ended as the system's first.
+  (the default) or `"native"`, and an optional `"id"` (a UUIDv7) for the new call. Returns the new call with its
+  `call_started` event. An open call from the last #{@call_window_minutes} minutes is returned as
+  `{:ok, call, :existing}` whatever the `"id"`, so a repeated request gets the call it started; an older one is
+  ended as the system's first. An `"id"` some other call already has is `{:error, :invalid_params}`.
   """
   @spec start_call(Scope.t(), String.t(), map()) ::
           {:ok, Call.t(), Event.t() | :existing} | {:error, :not_found | :invalid_params}
   def start_call(%Scope{} = scope, assistant_id, params) do
     with %Assistant{} = assistant <- Assistants.get_assistant(scope, assistant_id),
          {:ok, mode} <- cast_mode(params["mode"]),
-         {:ok, {call, started, notices}} <- Repo.transact(fn -> insert_call(assistant, mode) end) do
+         {:ok, id} <- cast_id(params["id"]),
+         {:ok, {call, started, notices}} <- Repo.transact(fn -> insert_call(assistant, id, mode) end) do
       broadcast(assistant.account_id, notices)
       {:ok, call, started}
     else
       nil -> {:error, :not_found}
+      {:error, %Changeset{}} -> {:error, :invalid_params}
       {:error, _reason} = error -> error
     end
   end
@@ -47,7 +50,7 @@ defmodule AssistantLink.Calls do
   defp cast_mode("native"), do: {:ok, :native}
   defp cast_mode(_mode), do: {:error, :invalid_params}
 
-  defp insert_call(assistant, mode) do
+  defp insert_call(assistant, id, mode) do
     lock_assistant(assistant.id)
 
     call = open_call(assistant.id)
@@ -58,7 +61,7 @@ defmodule AssistantLink.Calls do
       {:ok, ended} = end_open_call(assistant.id, :system)
       template = %Event{account_id: assistant.account_id, assistant_id: assistant.id, sender: :user}
 
-      with {:ok, voice_call} <- insert_voice_call(assistant.account_id, assistant.id, mode),
+      with {:ok, voice_call} <- insert_voice_call(assistant.account_id, assistant.id, mode, id),
            {:ok, started} <- Events.insert_event(%{template | type: :call_started}) do
         {:ok, {voice_call.call, started, ended ++ [{:event_created, voice_call}, {:event_created, started}]}}
       end
@@ -140,7 +143,7 @@ defmodule AssistantLink.Calls do
           | {:error, :not_found | :call_not_found | :invalid_params | Changeset.t()}
   def create_transcript_entry(%Scope{} = scope, assistant_id, call_id, params) do
     with {:ok, call} <- get_call(scope, assistant_id, call_id),
-         {:ok, id} <- cast_entry_id(params["id"]) do
+         {:ok, id} <- cast_id(params["id"]) do
       case id && Repo.get_by(TranscriptEntry, id: id, call_id: call.id) do
         %TranscriptEntry{} = entry -> {:ok, entry, :existing}
         nil -> insert_entry(call, id, params)
@@ -148,9 +151,9 @@ defmodule AssistantLink.Calls do
     end
   end
 
-  defp cast_entry_id(nil), do: {:ok, nil}
+  defp cast_id(nil), do: {:ok, nil}
 
-  defp cast_entry_id(<<_::288>> = id) do
+  defp cast_id(<<_::288>> = id) do
     with {:ok, uuid} <- Ecto.UUID.cast(id),
          {:ok, <<_::48, 7::4, _::12, 2::2, _::62>>} <- Ecto.UUID.dump(uuid) do
       {:ok, uuid}
@@ -159,7 +162,7 @@ defmodule AssistantLink.Calls do
     end
   end
 
-  defp cast_entry_id(_id), do: {:error, :invalid_params}
+  defp cast_id(_id), do: {:error, :invalid_params}
 
   defp insert_entry(call, id, params) do
     changeset = TranscriptEntry.create_changeset(%TranscriptEntry{id: id, account_id: call.account_id}, params)
@@ -217,23 +220,28 @@ defmodule AssistantLink.Calls do
     do: Repo.one!(from a in Assistant, where: a.id == ^assistant_id, lock: "FOR UPDATE", select: a.id)
 
   @doc """
-  Opens a call and stores its `voice_call` event, which it returns with the call. Run it in a transaction that
-  holds `lock_assistant/1`, after `end_open_call/2`.
+  Opens a call, with the given id or a new one, and stores its `voice_call` event, which it returns with the
+  call. An id some other call has is an error on `:id`. Run it in a transaction that holds `lock_assistant/1`,
+  after `end_open_call/2`.
   """
-  @spec insert_voice_call(Ecto.UUID.t(), Ecto.UUID.t(), atom()) :: {:ok, Event.t()} | {:error, Changeset.t()}
-  def insert_voice_call(account_id, assistant_id, mode) do
+  @spec insert_voice_call(Ecto.UUID.t(), Ecto.UUID.t(), atom(), Ecto.UUID.t() | nil) ::
+          {:ok, Event.t()} | {:error, Changeset.t()}
+  def insert_voice_call(account_id, assistant_id, mode, id \\ nil) do
     event = %Event{account_id: account_id, assistant_id: assistant_id, sender: :system, type: :voice_call}
 
-    with {:ok, event} <- Events.insert_event(event) do
-      call =
-        Repo.insert!(%Call{
-          account_id: account_id,
-          assistant_id: assistant_id,
-          event_id: event.id,
-          mode: mode,
-          started_at: event.inserted_at
-        })
-
+    with {:ok, event} <- Events.insert_event(event),
+         {:ok, call} <-
+           %Call{
+             id: id,
+             account_id: account_id,
+             assistant_id: assistant_id,
+             event_id: event.id,
+             mode: mode,
+             started_at: event.inserted_at
+           }
+           |> Changeset.change()
+           |> Changeset.unique_constraint(:id, name: :calls_pkey)
+           |> Repo.insert() do
       {:ok, %{event | call: call}}
     end
   end

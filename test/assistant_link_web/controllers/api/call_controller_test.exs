@@ -106,6 +106,69 @@ defmodule AssistantLinkWeb.API.CallControllerTest do
       assert_receive {:event_updated, %Event{type: :voice_call, call: %Call{id: ^old_id, ended_by: :system}}}
     end
 
+    test "starts the call with the app's UUIDv7 id and returns it again for that id",
+         %{conn: conn, assistant: assistant} do
+      id = Ecto.UUID.generate(version: 7)
+
+      assert %{"call" => %{"id" => ^id} = call} =
+               conn |> start_call(assistant.id, %{"id" => id}) |> json_response(201)
+
+      assert_receive {:event_created, %Event{type: :voice_call, call: %Call{id: ^id}}}
+      assert_receive {:event_created, %Event{type: :call_started}}
+
+      assert conn |> start_call(assistant.id, %{"id" => id}) |> json_response(200) == %{"call" => call}
+      assert Repo.aggregate(Call, :count) == 1
+      refute_received {:event_created, _event}
+    end
+
+    test "returns the open call when the app sends another id", %{conn: conn, assistant: assistant} do
+      %{"call" => call} = conn |> start_call(assistant.id) |> json_response(201)
+      assert_receive {:event_created, %Event{type: :voice_call}}
+      assert_receive {:event_created, %Event{type: :call_started}}
+
+      assert conn |> start_call(assistant.id, %{"id" => Ecto.UUID.generate(version: 7)}) |> json_response(200) ==
+               %{"call" => call}
+
+      assert Repo.aggregate(Call, :count) == 1
+      refute_received {:event_created, _event}
+    end
+
+    test "an ended call's id or another Assistant's is 422 invalid_params",
+         %{conn: conn, scope: scope, assistant: assistant} do
+      ended_id = conn |> start_call(assistant.id) |> json_response(201) |> get_in(["call", "id"])
+      conn |> end_call(assistant.id, ended_id) |> json_response(200)
+
+      {other, _token} = paired_link_fixture(scope, "Athena")
+      other_id = conn |> start_call(other.assistant_id) |> json_response(201) |> get_in(["call", "id"])
+      events = events(conn, assistant.id)
+
+      for id <- [ended_id, other_id] do
+        assert error_code(start_call(conn, assistant.id, %{"id" => id}), 422) == "invalid_params"
+      end
+
+      assert Repo.aggregate(Call, :count) == 2
+      assert events(conn, assistant.id) == events
+      refute Events.on_call?(assistant.id)
+    end
+
+    test "the id of an open call over an hour old is 422 invalid_params and leaves it open",
+         %{conn: conn, assistant: assistant} do
+      id = Ecto.UUID.generate(version: 7)
+      conn |> start_call(assistant.id, %{"id" => id}) |> json_response(201)
+      age(id, 61)
+
+      assert error_code(start_call(conn, assistant.id, %{"id" => id}), 422) == "invalid_params"
+      assert %Call{ended_at: nil} = Repo.get!(Call, id)
+    end
+
+    test "a malformed or non-UUIDv7 id is 422 invalid_params", %{conn: conn, assistant: assistant} do
+      for id <- ["abc", Ecto.UUID.generate(version: 4), 7] do
+        assert error_code(start_call(conn, assistant.id, %{"id" => id}), 422) == "invalid_params"
+      end
+
+      assert Repo.aggregate(Call, :count) == 0
+    end
+
     test "another account's Assistant is 404", %{conn: conn} do
       {:ok, %{credential: credential}} = Accounts.register_device()
       {link, _token} = paired_link_fixture(Accounts.get_scope_by_device_token(credential))
